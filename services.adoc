@@ -1,0 +1,179 @@
+= BenchMerge Backend Services Documentation
+
+== Overview
+
+This document describes the Python service modules located in `benchmergebackend/app/services/`. Each module implements specific functionality for managing configurations, tests, runs, and external service integration.
+
+== config_service.py
+
+Core service for managing configuration objects, families, and triggers.
+
+=== Key Functions
+
+* `create_config(payload)` - Creates a new configuration with family
+* `update_config(config_id, patch)` - Updates existing configuration
+* `update_config_trigger(config_id, trigger_patch)` - Merges trigger flags
+* `update_config_options(config_id, options_patch)` - Updates AI generation options
+* `create_offspring(config_id, count, name_prefix)` - Creates mutated child configs
+* `delete_config_deep(config_id, include_descendants)` - Deletes config and descendants
+* `ensure_default_collector_config()` - Ensures built-in Collector config exists
+* `normalize_trigger(value)` - Normalizes trigger shapes
+* `collector_trigger_enabled(config)` - Checks if collector trigger is enabled
+* `refresh_configs_view()`, `refresh_family_view()`, `refresh_config_results_view()` - View refreshers
+
+=== Features
+
+* Configuration families with parent-child relationships
+* Trigger system for auto-running Collector on completed groups
+* Offspring mutation with configurable AI parameters
+* Backward compatibility with older config formats
+
+== test_service.py
+
+Service for managing test definitions and their results.
+
+=== Key Functions
+
+* `create_test(payload)` - Creates a new test with prompts and checks
+* `update_test(test_id, patch)` - Updates existing test
+* `remove_test(test_id)` - Deletes test
+* `refresh_tests_view()` - Refreshes tests list view
+
+=== Features
+
+* Test definitions with system/user prompts
+* Validation checks configuration
+* Tags for test organization
+* Automatic results view creation
+
+== suite_service.py
+
+Service for managing test suites (groups of tests).
+
+=== Key Functions
+
+* `create_suite(payload)` - Creates a new suite
+* `update_suite(suite_id, patch)` - Updates existing suite
+* `remove_suite(suite_id)` - Deletes suite
+* `refresh_suites_view()` - Refreshes suites list view
+
+=== Features
+
+* Group multiple tests into suites
+* Suite validation against existing tests
+
+== run_service.py
+
+Service for executing runs and managing results.
+
+=== Key Functions
+
+* `create_run(suite_id, selected_test_ids, config_ids, ...)` - Creates and executes a run
+* `select_best_result(run_id, test_id)` - Selects best result from run
+* `refresh_runs_view()` - Refreshes runs list view
+* `refresh_result_views(results)` - Refreshes result views
+* `_run_collector_config_from_trigger(...)` - Runs Collector config automatically
+* `_maybe_run_collector_trigger(...)` - Decides whether to run Collector
+
+=== Features
+
+* Batch run execution via Dispatcher
+* Automatic Collector trigger on completed groups
+* Result scoring and leaderboard generation
+* Run manifest and index management
+
+== scoring.py
+
+Utility module for scoring responses against validation checks.
+
+=== Key Functions
+
+* `score_response(response_text, checks)` - Scores response text
+* `_safe_json_loads(text)` - Safely parses JSON
+* `_as_list(value)` - Converts value to list
+
+=== Checks Supported
+
+* `response_not_empty` - Response must not be empty
+* `contains` - Must contain specific strings
+* `not_contains` - Must not contain specific strings
+* `regex` - Must match regex patterns
+* `json_valid` - Response must be valid JSON
+* `must_have_keys` - JSON must have specific keys
+* `max_length`/`min_length` - Length constraints
+
+== promptbench_client.py
+
+HTTP client for communicating with Dispatcher service.
+
+=== Key Functions
+
+* `stream_batch(batch_items)` - Streams batch responses
+* `run_batch(batch_items)` - Runs batch and collects results
+* `run_service(payload)` - Runs single service
+* `stop_service(payload)` - Stops service
+* `launchpad_start(service)` - Starts LaunchPad service
+* `launchpad_restart(service)` - Restarts LaunchPad service
+* `launchpad_stop(service)` - Stops LaunchPad service
+* `launchpad_node_payload(payload)` - Gets node payload
+* `launchpad_set_payload(payload)` - Sets node payload
+* `launchpad_set_system_prompt(payload)` - Sets system prompt
+* `connections()` - Gets connections summary
+* `stream_connections()` - Streams connections SSE
+* `health()` - Health check
+
+=== Features
+
+* Backward-compatible class name (PromptBenchClient)
+* Dispatcher gateway proxy
+* SSE streaming support
+* HTTP error handling
+
+== realtime.py
+
+WebSocket connection manager for real-time updates.
+
+=== Key Functions
+
+* `RealtimeManager.connect(websocket)` - Connects client
+* `RealtimeManager.disconnect(websocket)` - Disconnects client
+* `RealtimeManager.broadcast(event)` - Broadcasts event
+* `publish_event(event_type, action, entity_id, payload)` - Publishes event
+* `publish_route_change(event_type, action, entity_id, payload)` - Publishes route change
+
+=== Features
+
+* In-memory WebSocket connection management
+* Event broadcasting to all connected clients
+* Route event dependencies for cascading updates
+* Automatic dead connection cleanup
+
+== file_view_service.py
+
+Utility for building file tree views.
+
+=== Key Functions
+
+* `build_tree(root, current)` - Builds recursive file tree
+* `read_relative_json(relative_path)` - Reads JSON file by relative path
+
+=== Features
+
+* Recursive directory traversal
+* File path normalization
+* JSON file reading with validation
+
+== Architecture Notes
+
+1. **Storage Abstraction** - Services use storage modules from `app.storage/` for persistence
+2. **Event-Driven Updates** - Realtime events broadcast changes to connected clients
+3. **Trigger System** - Collector auto-triggers based on config settings
+4. **Family Hierarchy** - Configs organized in parent-child families with edge tracking
+5. **View Refreshers** - Separate view files cache for frontend performance
+
+== Dependencies
+
+* FastAPI (HTTP exceptions, websockets)
+* httpx (async HTTP client for Dispatcher)
+* uuid, datetime, pathlib (core utilities)
+* regex, json (scoring utilities)

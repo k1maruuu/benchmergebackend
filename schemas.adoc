@@ -1,0 +1,966 @@
+= BenchMerge Backend - Документация Схем
+:author: BenchMerge Team
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== Обзор
+
+Этот документ описывает все Pydantic схемы, используемые в API BenchMerge Backend.
+Схемы определяют структуру запросов и ответов для различных эндпоинтов системы.
+
+== Файлы схем
+
+=== board_layout.py - Схемы для управления раскладкой доски
+
+==== BoardLayoutPosition
+
+Определяет позицию элемента на доске (UI компонент).
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| x
+| float
+| Координата X
+| Да
+
+| y
+| float
+| Координата Y
+| Да
+|===
+
+[source,json]
+----
+{
+  "x": 100.5,
+  "y": 200.0
+}
+----
+
+==== BoardLayoutPayload
+
+Контейнер для позиций всех элементов на доске.
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| positions
+| Dict[str, BoardLayoutPosition]
+| Словарь: ключ - ID элемента, значение - позиция
+| Нет (по умолчанию: {})
+|===
+
+[source,json]
+----
+{
+  "positions": {
+    "element_1": {"x": 50.0, "y": 100.0},
+    "element_2": {"x": 150.0, "y": 200.0}
+  }
+}
+----
+
+=== configs.py - Схемы для управления конфигурациями моделей
+
+==== ConfigTrigger
+
+Флаги автоматизации для конфигурации.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| collector
+| bool
+| Активировать Collector trigger для этой конфигурации
+| Нет
+| false
+|===
+
+[source,json]
+----
+{
+  "collector": true
+}
+----
+
+*Примечание:* Класс спроектирован как объект для возможности добавления новых флагов в будущем (например, improver).
+
+==== ConfigCreate
+
+Схема для создания новой конфигурации модели.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| config_id
+| Optional[str]
+| Уникальный ID конфигурации (генерируется backend, если не указан)
+| Нет
+| None
+
+| name
+| str
+| Название конфигурации
+| Да
+| —
+
+| model
+| str
+| Имя модели LLM
+| Нет
+| "gemma3:4b"
+
+| service
+| Optional[str]
+| Диспетчер service/route (orchestrator, workshop, puml_gen и др.)
+| Нет
+| None
+
+| node
+| Optional[str]
+| Опциональный LaunchPad node id (используется только для Pull/Push payload sync)
+| Нет
+| None
+
+| system_prompt
+| Optional[str]
+| Системный промпт для модели
+| Нет
+| None
+
+| options
+| Dict[str, Any]
+| Параметры генерации AI (temperature, top_p и др.)
+| Нет
+| {}
+
+| description
+| Optional[str]
+| Описание конфигурации
+| Нет
+| None
+
+| trigger
+| Optional[ConfigTrigger \| bool \| Dict[str, Any]]
+| Флаги автоматизации
+| Нет
+| None
+|===
+
+[source,json]
+----
+{
+  "name": "Test Config",
+  "model": "gemma3:4b",
+  "service": "workshop",
+  "node": "god_node",
+  "system_prompt": "Ты помощник разработчика",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
+  "description": "Конфигурация для тестирования",
+  "trigger": {
+    "collector": true
+  }
+}
+----
+
+==== ConfigUpdate
+
+Схема для обновления существующей конфигурации (все поля опциональны).
+
+|===
+| Поле | Тип | Описание |
+
+| name
+| Optional[str]
+| Название конфигурации
+
+| model
+| Optional[str]
+| Имя модели LLM
+
+| service
+| Optional[str]
+| Диспетчер service/route
+
+| node
+| Optional[str]
+| LaunchPad node id
+
+| system_prompt
+| Optional[str]
+| Системный промпт
+
+| options
+| Optional[Dict[str, Any]]
+| Параметры генерации AI
+
+| description
+| Optional[str]
+| Описание конфигурации
+
+| trigger
+| Optional[ConfigTrigger \| bool \| Dict[str, Any]]
+| Флаги автоматизации
+|===
+
+[source,json]
+----
+{
+  "name": "Updated Config",
+  "options": {
+    "temperature": 0.5
+  }
+}
+----
+
+==== ConfigTriggerPatch
+
+Запатчить флаги автоматизации для одной конфигурации.
+
+*Поддерживаемые форматы запроса:*
+
+[source,json]
+----
+// Формат 1: прямой ключ
+{ "collector": true }
+
+// Формат 2: вложенный trigger
+{ "trigger": { "collector": true } }
+
+// Формат 3: boolean
+{ "trigger": true }
+----
+
+|===
+| Поле | Тип | Описание |
+
+| trigger
+| Optional[ConfigTrigger \| bool \| Dict[str, Any]]
+| Объект с флагами или boolean
+
+| collector
+| Optional[bool]
+| Прямой флаг collector
+|===
+
+Метод `trigger_payload()` возвращает финальный Dict[str, Any] для применения к конфигурации.
+
+==== ConfigOptionsPatch
+
+Запатчить параметры генерации AI для конфигурации без удаления существующих ключей.
+
+*Поддерживаемые форматы запроса:*
+
+[source,json]
+----
+// Формат 1: прямой
+{ "temperature": 0.3, "top_p": 0.9 }
+
+// Формат 2: вложенный options
+{ "options": { "temperature": 0.3, "top_p": 0.9 } }
+----
+
+|===
+| Поле | Тип | Описание |
+
+| options
+| Optional[Dict[str, Any]]
+| Параметры генерации
+|===
+
+Метод `options_payload()` возвращает финальный Dict[str, Any] для применения к конфигурации.
+
+*Примечание:* Schema позволяет неизвестные ключи, так как разные LLM провайдеры имеют разные параметры. Валидация общих ключей происходит на уровне сервиса.
+
+==== OffspringCreateRequest
+
+Запрос для создания потомков конфигурации (используется для генерации вариаций).
+
+|===
+| Поле | Тип | Описание | Значение по умолчанию
+
+| count
+| int
+| Количество потомков для создания
+| 3
+
+| name_prefix
+| Optional[str]
+| Префикс для имен потомков
+| None
+
+| mutation_strategy
+| str
+| Стратегия мутации
+| "small_variation"
+|===
+
+[source,json]
+----
+{
+  "count": 5,
+  "name_prefix": "variant_",
+  "mutation_strategy": "large_variation"
+}
+----
+
+=== gateway.py - Схемы для прокси-запросов к Dispatcher
+
+==== GatewayRunRequest
+
+Запрос для запуска работы через Dispatcher.
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher (получить через GET /gateway/connections)
+| Да
+
+| node
+| Optional[str] (NodeName)
+| ID узла из service.nodes выбранного сервиса
+| Нет
+
+| prompt
+| Optional[str]
+| Системный промпт для выбранного узла
+| Нет
+|===
+
+*Валидация:*
+- Если указан `node`, то обязателен `prompt`
+- Если указан `prompt`, то обязателен `node`
+
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "prompt": "Ты разработчик по Rust"
+}
+----
+
+==== GatewayStopRequest
+
+Запрос для остановки работы сервиса Dispatcher.
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher для остановки
+| Да
+|===
+
+[source,json]
+----
+{
+  "service": "workshop"
+}
+----
+
+==== LaunchpadStackRequest
+
+Запрос для получения стека LaunchPad.
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher
+| Да
+|===
+
+[source,json]
+----
+{
+  "service": "workshop"
+}
+----
+
+==== LaunchpadSetSystemPromptRequest
+
+Запрос для установки системного промпта (поддерживает два формата).
+
+*Формат 1 - UI (рекомендуемый):*
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "prompt": "Ты разработчик по Rust"
+}
+----
+
+*Формат 2 - Dispatcher-compatible (динамический):*
+[source,json]
+----
+{
+  "service": "workshop",
+  "god_node": "Ты разработчик по Rust"
+}
+----
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher
+| Да
+
+| node
+| Optional[str] (NodeName)
+| ID узла
+| Нет
+
+| prompt
+| Optional[str]
+| Системный промпт
+| Нет
+|===
+
+*Валидация:* Передайте либо `node+prompt`, либо `service` + динамическое поле узла.
+
+Метод `dispatcher_payload()` формирует финальный payload для отправки в Dispatcher.
+
+==== LaunchpadNodePayloadRequest
+
+Запрос для получения payload узла из Dispatcher (используется кнопкой Pull в frontend).
+
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "chat1"
+}
+----
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher
+| Да
+
+| node
+| str (NodeName)
+| ID узла для получения payload
+| Да
+|===
+
+==== LaunchpadSetPayloadRequest
+
+Запрос для применения payload карточки обратно в Dispatcher LaunchPad.
+
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "system_prompt": "Новый промпт",
+  "options": {
+    "temperature": 0.5
+  }
+}
+----
+
+|===
+| Поле | Тип | Описание | Обязательное
+
+| service
+| str (ServiceName)
+| Имя сервиса Dispatcher
+| Да
+
+| node
+| str (NodeName)
+| ID узла
+| Да
+
+| system_prompt
+| Optional[str]
+| Системный промпт
+| Нет
+
+| options
+| Optional[dict[str, Any]]
+| Параметры генерации
+| Нет
+|===
+
+*Валидация:* Должен быть передан хотя бы один из параметров: `system_prompt` или `options`.
+
+==== GatewayRunResponse
+
+Ответ от запуска работы через Gateway.
+
+|===
+| Поле | Тип | Описание
+
+| service
+| Optional[str]
+| Имя сервиса
+
+| node
+| Optional[str]
+| ID узла
+
+| updated_prompt
+| Optional[bool]
+| Был ли обновлен промпт
+
+| status
+| Optional[str]
+| Статус выполнения
+
+| steps
+| Optional[list[dict]]
+| Шаги выполнения
+
+| raw
+| dict[str, Any]
+| Сырые данные ответа
+|===
+
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "updated_prompt": true,
+  "status": "completed",
+  "steps": [
+    {"step": 1, "description": "Init"},
+    {"step": 2, "description": "Generate"}
+  ],
+  "raw": {}
+}
+----
+
+==== GatewayHealthResponse
+
+Ответ проверки здоровья Gateway.
+
+|===
+| Поле | Тип | Описание
+
+| dispatcher_base_url
+| str
+| Базовый URL Dispatcher
+
+| promptbench_base_url
+| str
+| Базовый URL PromptBench
+
+| available
+| bool
+| Доступен ли сервис
+
+| response
+| Optional[dict \| str]
+| Детали ответа
+|===
+
+[source,json]
+----
+{
+  "dispatcher_base_url": "http://dispatcher:8000",
+  "promptbench_base_url": "http://promptbench:8000",
+  "available": true,
+  "response": {"status": "ok"}
+}
+----
+
+=== runs.py - Схемы для управления запусками тестов
+
+==== RunCreate
+
+Схема для создания нового запуска тестов.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| suite_id
+| Optional[str]
+| ID набора тестов (suite)
+| Нет
+| None
+
+| selected_test_ids
+| Optional[List[str]]
+| Список выбранных ID тестов
+| Нет
+| None
+
+| config_ids
+| List[str]
+| Список ID конфигураций для запуска
+| Нет
+| []
+
+| promptbench_batch_stream_url
+| Optional[str]
+| URL потока для batch-запросов PromptBench
+| Нет
+| None
+
+| service
+| Optional[str]
+| Диспетчер route/service (если не указан, используется config.service или BENCHFILE_DEFAULT_SERVICE)
+| Нет
+| None
+|===
+
+[source,json]
+----
+{
+  "suite_id": "suite_123",
+  "config_ids": ["config_1", "config_2"],
+  "service": "orchestrator"
+}
+----
+
+==== SelectBestRequest
+
+Запрос для выбора лучшего результата в запуске.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| run_id
+| str
+| ID запуска
+| Да
+| —
+
+| test_id
+| str
+| ID теста
+| Да
+| —
+
+| prefer_lower_latency
+| bool
+| Предпочитать меньшую задержку
+| Нет
+| true
+|===
+
+[source,json]
+----
+{
+  "run_id": "run_456",
+  "test_id": "test_789",
+  "prefer_lower_latency": true
+}
+----
+
+==== CollectorDispatchRequest
+
+Запрос для отправки результатов сохраненного запуска в сервис `collector` Dispatcher.
+
+[source,json]
+----
+{
+  "run_id": "run_456",
+  "force": true
+}
+----
+
+[source,json]
+----
+{
+  "parent_config_id": "config_123",
+  "force": false
+}
+----
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| run_id
+| Optional[str]
+| ID запуска (если frontend знает точный run)
+| Нет
+| None
+
+| parent_config_id
+| Optional[str]
+| ID родительской конфигурации (backend найдет последний завершенный run для этой семьи)
+| Нет
+| None
+
+| force
+| bool
+| Принудительно перезаписать
+| Нет
+| false
+|===
+
+*Примечание:* Используйте `run_id` для конкретного запуска или `parent_config_id` для автоматического выбора последнего запуска семьи.
+
+=== suites.py - Схемы для управления наборами тестов
+
+==== SuiteCreate
+
+Схема для создания нового набора тестов.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| suite_id
+| Optional[str]
+| Уникальный ID набора (генерируется backend, если не указан)
+| Нет
+| None
+
+| name
+| str
+| Название набора
+| Да
+| —
+
+| description
+| Optional[str]
+| Описание набора
+| Нет
+| None
+
+| test_ids
+| List[str]
+| Список ID тестов в наборе
+| Нет
+| []
+|===
+
+[source,json]
+----
+{
+  "name": "Regression Tests",
+  "description": "Набор регрессионных тестов",
+  "test_ids": ["test_1", "test_2", "test_3"]
+}
+----
+
+==== SuiteUpdate
+
+Схема для обновления существующего набора тестов (все поля опциональны).
+
+|===
+| Поле | Тип | Описание
+
+| name
+| Optional[str]
+| Название набора
+
+| description
+| Optional[str]
+| Описание набора
+
+| test_ids
+| Optional[List[str]]
+| Список ID тестов
+|===
+
+[source,json]
+----
+{
+  "name": "Updated Regression Tests",
+  "test_ids": ["test_1", "test_4"]
+}
+----
+
+=== tests.py - Схемы для управления тестовыми заданиями
+
+==== TestCreate
+
+Схема для создания нового теста.
+
+|===
+| Поле | Тип | Описание | Обязательное | Значение по умолчанию
+
+| test_id
+| Optional[str]
+| Уникальный ID теста (backend-native)
+| Нет
+| None
+
+| name
+| Optional[str]
+| Название теста
+| Нет
+| None (генерируется)
+
+| system_prompt
+| Optional[str]
+| Системный промпт
+| Нет
+| None
+
+| user_prompt
+| Optional[str]
+| Пользовательский промпт (обязательно через validatior)
+| Да (после валидации)
+| —
+
+| id
+| Optional[str]
+| ID теста (frontend-compatible)
+| Нет
+| None
+
+| input
+| Optional[str]
+| Входной промпт (frontend-compatible)
+| Нет
+| None
+
+| checks
+| Dict[str, Any]
+| Проверки для теста
+| Нет
+| {}
+
+| tags
+| List[str]
+| Теги теста
+| Нет
+| []
+|===
+
+*Валидация:*
+- Если `test_id` не указан, но есть `id`, то `test_id = id`
+- Если `user_prompt` не указан, но есть `input`, то `user_prompt = input`
+- Если `name` не указан, генерируется из `test_id`, `id` или "Untitled test"
+- `user_prompt` обязателен после нормализации
+
+[source,json]
+----
+{
+  "test_id": "test_123",
+  "name": "Example Test",
+  "system_prompt": "Ты эксперт",
+  "user_prompt": "Решите задачу...",
+  "checks": {
+    "accuracy": true,
+    "latency_threshold": 100
+  },
+  "tags": ["regression", "smoke"]
+}
+----
+
+[source,json]
+----
+// Frontend-compatible формат
+{
+  "id": "test_456",
+  "input": "Что такое Python?",
+  "tags": ["qa"]
+}
+----
+
+==== TestUpdate
+
+Схема для обновления существующего теста (все поля опциональны).
+
+|===
+| Поле | Тип | Описание
+
+| name
+| Optional[str]
+| Название теста
+
+| system_prompt
+| Optional[str]
+| Системный промпт
+
+| user_prompt
+| Optional[str]
+| Пользовательский промпт
+
+| input
+| Optional[str]
+| Входной промпт (frontend-compatible)
+
+| checks
+| Optional[Dict[str, Any]]
+| Проверки для теста
+
+| tags
+| Optional[List[str]]
+| Теги теста
+|===
+
+*Валидация:* Если `user_prompt` не указан, но есть `input`, то `user_prompt = input`.
+
+[source,json]
+----
+{
+  "name": "Updated Test",
+  "user_prompt": "Новый промпт",
+  "checks": {
+    "accuracy": false
+  }
+}
+----
+
+== Индекс схем по категориям
+
+[cols="1,2,3"]
+|===
+| Категория | Файл | Классы схем
+
+| Board Layout
+| board_layout.py
+| BoardLayoutPosition, BoardLayoutPayload
+
+| Configs
+| configs.py
+| ConfigTrigger, ConfigCreate, ConfigUpdate, ConfigTriggerPatch, ConfigOptionsPatch, OffspringCreateRequest
+
+| Gateway
+| gateway.py
+| GatewayRunRequest, GatewayStopRequest, LaunchpadStackRequest, LaunchpadSetSystemPromptRequest, LaunchpadNodePayloadRequest, LaunchpadSetPayloadRequest, GatewayRunResponse, GatewayHealthResponse
+
+| Runs
+| runs.py
+| RunCreate, SelectBestRequest, CollectorDispatchRequest
+
+| Suites
+| suites.py
+| SuiteCreate, SuiteUpdate
+
+| Tests
+| tests.py
+| TestCreate, TestUpdate
+|===
+
+== Примечания
+
+- Все схемы используют Pydantic v2 для валидации данных
+- Опциональные поля могут быть `None` или иметь значения по умолчанию
+- Схемы с `model_validator` могут изменять значения полей при валидации
+- Некоторые схемы поддерживают несколько форматов запросов для совместимости с frontend и Dispatcher
+- Поля типа `Dict[str, Any]` позволяют динамические значения без строгой типизации
+
+== История изменений
+
+|===
+| Версия | Дата | Изменения
+
+| 1.0
+| 2025-01-01
+| Initial documentation
+|===

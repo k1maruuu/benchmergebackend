@@ -1,0 +1,706 @@
+= BenchMerge Backend API Documentation
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectnums:
+
+Это документация API роутеров BenchMerge Backend. Система предназначена для управления конфигурациями, запуска тестов и управления жизненным циклом моделей.
+
+== Обзор архитектуры
+
+BenchMerge Backend — это FastAPI-приложение, которое управляет конфигурациями AI-моделей, запускает тестовые прогоны, взаимодействует с внешними сервисами через Dispatcher и поддерживает автоматизированные триггеры для сбора результатов.
+
+Основные компоненты:
+- **Configs** — конфигурации моделей и промптов
+- **Tests** — тестовые задания с системными и пользовательскими промптами
+- **Suites** — наборы тестов для группового запуска
+- **Runs** — запуски тестов с конфигурациями
+- **Gateway** — прокси к Dispatcher для взаимодействия с внешними сервисами
+- **Collector** — автоматизированный сбор и оценка результатов
+
+== Роутер: Configs (`/api/v1/configs`)
+
+Роутер для управления конфигурациями AI-моделей. Конфигурация определяет модель, промпты, опции генерации и привязку к LaunchPad нодам.
+
+=== GET /api/v1/configs
+
+Получить список всех конфигураций.
+
+*Response:*
+[source,json]
+----
+{
+  "items": [
+    {
+      "id": "cfg_abc123",
+      "name": "My Config",
+      "model": "gemma3:4b",
+      "service": "workshop",
+      "node": null,
+      "system_prompt": "Ты помощник",
+      "options": {"temperature": 0.7},
+      "description": "Description here",
+      "trigger": {"collector": false},
+      "created_at": "2024-01-01T00:00:00+00:00",
+      "family_id": "fam_123",
+      "generation": 0,
+      "parent_config_id": null
+    }
+  ]
+}
+----
+
+=== GET /api/v1/configs/{config_id}
+
+Получить конфигурацию по ID.
+
+*Response:* (та же структура, что и один объект в items выше)
+
+=== POST /api/v1/configs
+
+Создать новую конфигурацию.
+
+*Request Body:*
+[source,json]
+----
+{
+  "config_id": "my_custom_id",
+  "name": "New Config",
+  "model": "gemma3:4b",
+  "service": "workshop",
+  "node": "god_node",
+  "system_prompt": "Ты разработчик",
+  "options": {"temperature": 0.8, "top_p": 0.9},
+  "description": "Custom config for development",
+  "trigger": {"collector": false}
+}
+----
+
+*Параметры:*
+- `config_id` (Optional[str]) — пользовательский ID конфигурации. Если не указан, генерируется автоматически.
+- `name` (str) — название конфигурации (обязательно).
+- `model` (str) — модель по умолчанию `gemma3:4b`.
+- `service` (Optional[str]) — сервис Dispatcher (orchestrator, workshop, puml_gen и др.).
+- `node` (Optional[str]) — ID нода LaunchPad для синхронизации Payload (Pull/Push).
+- `system_prompt` (Optional[str]) — системный промпт.
+- `options` (Dict[str, Any]) — опции генерации (temperature, top_p, top_k, repeat_penalty и др.).
+- `description` (Optional[str]) — описание конфигурации.
+- `trigger` (Optional[ConfigTrigger | bool | Dict]) — флаги автоматизации.
+
+*ConfigTrigger:*
+[source,json]
+----
+{
+  "collector": false
+}
+----
+
+=== PUT /api/v1/configs/{config_id}
+
+Обновить конфигурацию.
+
+*Request Body:* (все поля из ConfigUpdate, опционально)
+[source,json]
+----
+{
+  "name": "Updated Name",
+  "model": "llama3:8b",
+  "system_prompt": "New system prompt",
+  "options": {"temperature": 0.5},
+  "trigger": {"collector": true}
+}
+----
+
+=== DELETE /api/v1/configs/{config_id}
+
+Удалить конфигурацию с учётом наследников (если есть).
+
+=== PATCH /api/v1/configs/{config_id}/trigger
+
+Обновить только триггер конфигурации (например, включить/выключить авто-Collector).
+
+*Request Body:*
+[source,json]
+----
+{
+  "trigger": {"collector": true}
+}
+----
+
+Или упрощённо:
+[source,json]
+----
+{
+  "collector": true
+}
+----
+
+=== PATCH /api/v1/configs/{config_id}/options
+
+Обновить только опции генерации (частичное обновление, не удаляет существующие ключи).
+
+*Request Body:*
+[source,json]
+----
+{
+  "temperature": 0.3,
+  "top_p": 0.85
+}
+----
+
+Или:
+[source,json]
+----
+{
+  "options": {"temperature": 0.3}
+}
+----
+
+=== POST /api/v1/configs/{config_id}/offspring
+
+Создать потомков (offspring) текущей конфигурации с мутацией опций.
+
+*Request Body:*
+[source,json]
+----
+{
+  "count": 3,
+  "name_prefix": "variant",
+  "mutation_strategy": "small_variation"
+}
+----
+
+*Параметры:*
+- `count` (int) — количество потомков (по умолчанию 3).
+- `name_prefix` (Optional[str]) — префикс имен потомков.
+- `mutation_strategy` (str) — стратегия мутации (`small_variation` — единственное значение).
+
+== Роутер: Tests (`/api/v1/tests`)
+
+Роутер для управления тестовыми заданиями. Тест содержит системный и пользовательский промпт, а также критерии проверки.
+
+=== GET /api/v1/tests
+
+Получить список всех тестов.
+
+=== GET /api/v1/tests/{test_id}
+
+Получить тест по ID.
+
+=== POST /api/v1/tests
+
+Создать новый тест.
+
+*Request Body:*
+[source,json]
+----
+{
+  "test_id": "test_123",
+  "name": "Test Name",
+  "system_prompt": "Ты оценщик",
+  "user_prompt": "Оцени этот ответ",
+  "checks": {"regex": "^[0-9]$"},
+  "tags": ["evaluation", "demo"]
+}
+----
+
+*Альтернативный формат (для совместимости с frontend):*
+[source,json]
+----
+{
+  "id": "test_123",
+  "input": "Оцени этот ответ"
+}
+----
+
+*Параметры:*
+- `test_id` / `id` (Optional[str]) — пользовательский ID теста.
+- `name` (Optional[str]) — название (генерируется из ID, если не указано).
+- `system_prompt` (Optional[str]) — системный промпт для теста.
+- `user_prompt` / `input` (str) — пользовательский промпт (обязательно).
+- `checks` (Dict[str, Any]) — критерии валидации ответа.
+- `tags` (List[str]) — теги для фильтрации.
+
+=== PUT /api/v1/tests/{test_id}
+
+Обновить тест.
+
+*Request Body:* (опциональные поля)
+[source,json]
+----
+{
+  "name": "Updated Test",
+  "user_prompt": "New input prompt",
+  "checks": {"regex": "^[A-Z]"}
+}
+----
+
+=== DELETE /api/v1/tests/{test_id}
+
+Удалить тест.
+
+== Роутер: Suites (`/api/v1/suites`)
+
+Роутер для управления наборами тестов. Сьюйт позволяет группировать тесты для запуска вместе.
+
+=== GET /api/v1/suites
+
+Получить список всех сьютов.
+
+=== GET /api/v1/suites/{suite_id}
+
+Получить сьют по ID.
+
+=== POST /api/v1/suites
+
+Создать новый сьют.
+
+*Request Body:*
+[source,json]
+----
+{
+  "suite_id": "suite_123",
+  "name": "Evaluation Suite",
+  "description": "Suite for model evaluation",
+  "test_ids": ["test_1", "test_2", "test_3"]
+}
+----
+
+=== PUT /api/v1/suites/{suite_id}
+
+Обновить сьют.
+
+*Request Body:*
+[source,json]
+----
+{
+  "name": "Updated Suite",
+  "test_ids": ["test_1", "test_4"]
+}
+----
+
+=== DELETE /api/v1/suites/{suite_id}
+
+Удалить сьют.
+
+== Роутер: Runs (`/api/v1/runs`)
+
+Роутер для управления запусками. Запуск выполняется с набором конфигураций и тестов, взаимодействует с Dispatcher.
+
+=== GET /api/v1/runs
+
+Получить список всех запусков.
+
+=== GET /api/v1/runs/{run_id}
+
+Получить запуск по ID.
+
+=== POST /api/v1/runs
+
+Создать и запустить новый запуск.
+
+*Request Body:*
+[source,json]
+----
+{
+  "suite_id": "suite_123",
+  "selected_test_ids": ["test_1", "test_2"],
+  "config_ids": ["cfg_1", "cfg_2"],
+  "service": "workshop"
+}
+----
+
+*Параметры:*
+- `suite_id` (Optional[str]) — ID сьюта для запуска всех тестов из него.
+- `selected_test_ids` (Optional[List[str]]) — явный список тестов для запуска.
+- `config_ids` (List[str]) — список ID конфигураций для запуска (обязательно).
+- `promptbench_batch_stream_url` (Optional[str]) — URL для потоковой передачи результатов.
+- `service` (Optional[str]) — сервис Dispatcher (если не указан, используется из конфигураций или `BENCHFILE_DEFAULT_SERVICE`).
+
+*Response:*
+[source,json]
+----
+{
+  "run_id": "run_cfg_abc_test_123_20241201_120000_123456",
+  "status": "running",
+  "config_ids": ["cfg_1", "cfg_2"],
+  "test_ids": ["test_1", "test_2"],
+  "results_path": "/app/storage/runs/2024-12/run_x/results",
+  "created_at": "2024-12-01T12:00:00+00:00"
+}
+----
+
+=== GET /api/v1/runs/{run_id}/results
+
+Получить результаты запуска.
+
+=== POST /api/v1/runs/{run_id}/select-best
+
+Выбрать лучший результат для теста в рамках запуска.
+
+*Request Body:*
+[source,json]
+----
+{
+  "test_id": "test_1",
+  "prefer_lower_latency": true
+}
+----
+
+=== POST /api/v1/collector/dispatch
+
+Вручную запустить Collector для уже сохранённых результатов запуска.
+
+*Request Body:*
+[source,json]
+----
+{
+  "run_id": "run_x",
+  "force": false
+}
+----
+
+Или через родительскую конфигурацию:
+[source,json]
+----
+{
+  "parent_config_id": "cfg_parent",
+  "force": false
+}
+----
+
+== Роутер: Gateway (`/api/v1/gateway`)
+
+Роутер для взаимодействия с внешними сервисами через Dispatcher. Предоставляет прокси-методы для запуска сервисов и синхронизации с LaunchPad.
+
+=== GET /api/v1/gateway/connections
+
+Получить список доступных сервисов Dispatcher.
+
+*Response:*
+[source,json]
+----
+[
+  {
+    "service": "workshop",
+    "url": "http://dispatcher:8000/workshop",
+    "nodes": ["god_node", "chat1", "evaluator"]
+  },
+  {
+    "service": "orchestrator",
+    "url": "http://dispatcher:8000/orchestrator"
+  }
+]
+----
+
+=== GET /api/v1/gateway/health
+
+Проверить доступность Dispatcher и PromptBench.
+
+*Response:*
+[source,json]
+----
+{
+  "dispatcher_base_url": "http://dispatcher:8000",
+  "promptbench_base_url": "http://promptbench:8000",
+  "available": true,
+  "response": {"status": "ok"}
+}
+----
+
+=== POST /api/v1/gateway/run
+
+Запустить конфигурацию через указанный сервис Dispatcher.
+
+*Request Body:*
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "prompt": "Ты разработчик по Rust"
+}
+----
+
+*Примечание:* Поля `node` и `prompt` должны передаваться вместе или отсутствовать вместе.
+
+=== POST /api/v1/gateway/stop
+
+Остановить сервис Dispatcher.
+
+*Request Body:*
+[source,json]
+----
+{
+  "service": "workshop"
+}
+----
+
+=== POST /api/v1/gateway/launchpad/set-system-prompt
+
+Установить системный промпт для нода в LaunchPad Dispatcher.
+
+*Формат 1 (предпочтительный):*
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "god_node",
+  "prompt": "Ты разработчик"
+}
+----
+
+*Формат 2 (динамический, совместимый с Dispatcher):*
+[source,json]
+----
+{
+  "service": "workshop",
+  "god_node": "Ты разработчик"
+}
+----
+
+=== POST /api/v1/gateway/launchpad/pull
+
+Получить Payload нода из LaunchPad Dispatcher.
+
+*Request Body:*
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "chat1"
+}
+----
+
+=== POST /api/v1/gateway/launchpad/set-payload
+
+Применить Payload конфигурации обратно в LaunchPad Dispatcher.
+
+*Request Body:*
+[source,json]
+----
+{
+  "service": "workshop",
+  "node": "chat1",
+  "system_prompt": "Updated prompt",
+  "options": {"temperature": 0.5}
+}
+----
+
+*Примечание:* Должен быть передан хотя бы один из параметров: `system_prompt` или `options`.
+
+== Роутер: Board Layout (`/api/v1/board-layout`)
+
+Роутер для сохранения позиций карточек на доске (UI состояние).
+
+=== GET /api/v1/board-layout
+
+Получить сохранённые позиции карточек.
+
+*Response:*
+[source,json]
+----
+{
+  "positions": {
+    "cfg_abc123": {"x": 100.0, "y": 200.0},
+    "test_456": {"x": 300.0, "y": 400.0}
+  }
+}
+----
+
+=== PUT /api/v1/board-layout
+
+Обновить позиции карточек.
+
+*Request Body:*
+[source,json]
+----
+{
+  "positions": {
+    "cfg_abc123": {"x": 150.0, "y": 250.0}
+  }
+}
+----
+
+== Роутер: Realtime (`/api/v1/realtime`)
+
+Роутер для поддержки событий в реальном времени через WebSocket или SSE (если реализовано).
+
+=== GET /api/v1/realtime/events
+
+Получить события в реальном времени (SSE endpoint).
+
+Поддерживаемые события:
+- `config.created`
+- `config.updated`
+- `config.deleted`
+- `run.started`
+- `run.completed`
+- `run.failed`
+- `collector.triggered`
+
+== Специальные механизмы
+
+=== Collector Trigger
+
+Если у родительской конфигурации включен `trigger.collector: true`, то после завершения запуска с её потомками автоматически запускается Collector.
+
+Collector — это особая конфигурация (`cfg_collector`), которая:
+- Получает путь к результатам запуска в качестве пользовательского промпта
+- Анализирует результаты и возвращает JSON с `best_answer`, `diff`, `judge_score`
+- Использует модель `qwen3:14b`
+
+Пример конфигурации с триггером:
+[source,json]
+----
+{
+  "id": "cfg_parent",
+  "name": "Parent Config",
+  "trigger": {
+    "collector": true
+  }
+}
+----
+
+=== Offspring Mutation
+
+Потомки конфигураций создаются с мутацией опций:
+- `temperature`: ±0.1 или ±0.2
+- `top_p`: ±0.05
+- `top_k`: ±5 или ±10
+- `repeat_penalty`: ±0.1
+- `num_ctx`: ±512
+- И другие опции
+
+=== Family Structure
+
+Конфигурации организуются в семейства (families) с древовидной структурой:
+- `family_id` — идентификатор семейства
+- `parent_config_id` — родительская конфигурация
+- `generation` — поколение (0 для корневого)
+- `edges` — связи родитель-потомок
+
+== Ошибки
+
+=== HTTP Status Codes
+
+| Код | Описание |
+|-----|----------|
+| 200 | OK |
+| 201 | Created |
+| 204 | No Content (удачное удаление) |
+| 400 | Bad Request |
+| 404 | Not Found |
+| 409 | Conflict (ресурс уже существует) |
+| 422 | Validation Error |
+| 500 | Internal Server Error |
+
+=== Common Error Messages
+
+[source,json]
+----
+{
+  "detail": "Config not found: cfg_xxx"
+}
+----
+
+[source,json]
+----
+{
+  "detail": "Поле user_prompt/input обязательно"
+}
+----
+
+[source,json]
+----
+{
+  "detail": "Option temperature must be between 0.0 and 2.0"
+}
+----
+
+== Приложения
+
+=== Структура хранилища
+
+[source]
+----
+storage/
+├── configs/
+│   ├── items/
+│   │   └── cfg_*.json
+│   └── views/
+│       ├── configs_list.json
+│       ├── families/
+│       │   └── fam_*.json
+│       └── results/
+│           └── cfg_*.json
+├── tests/
+│   └── items/
+│       └── test_*.json
+├── suites/
+│   └── items/
+│       └── suite_*.json
+├── runs/
+│   └── 2024-12/
+│       └── run_xxx/
+│           ├── run.json
+│           ├── index.json
+│           └── results/
+│               └── res_*.json
+└── views/
+    ├── runs_list.json
+    ├── leaderboard/
+    │   └── test_*.json
+    └── test_results/
+        └── test_*.json
+----
+
+=== Пример полного workflows
+
+1. Создание конфигурации:
+[source,json]
+----
+POST /api/v1/configs
+{
+  "name": "My Model Config",
+  "model": "gemma3:4b",
+  "system_prompt": "Ты помощник",
+  "options": {"temperature": 0.7}
+}
+----
+
+2. Создание теста:
+[source,json]
+----
+POST /api/v1/tests
+{
+  "name": "Evaluation Test",
+  "user_prompt": "Оцени этот текст"
+}
+----
+
+3. Запуск:
+[source,json]
+----
+POST /api/v1/runs
+{
+  "config_ids": ["cfg_created_id"],
+  "selected_test_ids": ["test_created_id"]
+}
+----
+
+4. Получение результатов:
+[source,json]
+----
+GET /api/v1/runs/{run_id}/results
+----
+
+== Изменения и версии
+
+Версия API: 1.0
+
+Последнее обновление: 2025
+
+== Контакты
+
+При возникновении проблем обращайтесь к разработчикам проекта BenchMerge.

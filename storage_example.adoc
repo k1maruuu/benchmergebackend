@@ -1,0 +1,476 @@
+= Документация JSON-файлов хранилища BenchMerge Backend
+:doctype: article
+:icons: font
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== Введение
+
+Этот документ содержит описание всех JSON-файлов, находящихся в директории `benchmergebackend/storage/`. 
+Файлы организованы по категориям и содержат конфигурации, тесты, результаты прогонов и другие данные системы.
+
+== Структура хранилища
+
+[cols="25%,35%,40%"]
+|===
+|Папка |Описание |Содержимое
+
+|`storage/configs/`
+|Хранение конфигураций моделей и их семей
+|Субпапки `items/` (отдельные конфиги) и `families/` (семейства конфигов)
+
+|`storage/tests/`
+|Хранение тестов и наборов тестов
+|Субпапки `items/` (отдельные тесты) и `suites/` (наборы тестов)
+
+|`storage/runs/`
+|Результаты выполнения тестов
+|Папки по датам (год-месяц) с результатами прогонов
+
+|`storage/views/`
+|Виды и списки для фронтенда
+|Готовые представления данных: списки конфигов, тестов, результатов, лидерборды и т.д.
+|===
+
+== Конфигурации
+
+=== Файлы конфигураций (items)
+
+==== cfg_test.json
+*Путь:* `storage/configs/items/cfg_test.json`
+
+Пример конфигурации модели с поддержкой генеалогии (lineage).
+
+[source,json]
+----
+{
+  "id": "cfg_0247008a",
+  "name": "ai_cfg_f9388df4_child_3",
+  "family_id": "fam_dffbff89",
+  "generation": 2,
+  "parent_config_id": "cfg_f9388df4",
+  "model": "qwen3:14b",
+  "service": "workshop",
+  "node": null,
+  "system_prompt": "Возьми роль эксперта по дизайну",
+  "options": {
+    "temperature": 0.2
+  },
+  "description": "Offspring of cfg_f9388df4",
+  "trigger": {
+    "collector": true
+  },
+  "created_at": "2026-05-25T03:37:04.885042+00:00",
+  "lineage": {
+    "parent_config_id": "cfg_f9388df4",
+    "mutation_diff": {
+      "temperature": {
+        "old": 0.4,
+        "new": 0.2
+      }
+    },
+    "selection_reason": "manual_offspring_creation"
+  }
+}
+----
+
+[cols="1,3"]
+|===
+|Поле |Описание
+
+|id
+|Уникальный идентификатор конфигурации
+
+|name
+|Название конфигурации
+
+|family_id
+|ID семейства конфигов, к которому принадлежит эта конфигурация
+
+|generation
+|Поколение в генеалогическом дереве (0 - корневой конфиг)
+
+|parent_config_id
+|ID родительской конфигурации (null для корневых конфигов)
+
+|model
+|Используемая модель (например, qwen3:14b, gemma3:4b)
+
+|service
+|Сервис для выполнения (orchestrator, workshop, collector)
+
+|node
+|Узел для выполнения (если требуется специфичный node)
+
+|system_prompt
+|Системный промпт для модели
+
+|options
+|Параметры модели: temperature, top_k, top_p, num_ctx, num_predict, seed
+
+|description
+|Описание конфигурации
+
+|trigger
+|Триггеры: collector - автоматический вызов коллектора
+
+|created_at
+|Время создания конфигурации
+
+|lineage
+|Генеалогия: parent_config_id, mutation_diff (изменения от родителя), selection_reason
+|===
+
+==== Список всех конфигов (configs_list.json)
+*Путь:* `storage/views/configs_list.json`
+
+Массив всех конфигураций системы. Содержит:
+
+- System configs (role: "collector") - системные конфигурации
+- User configs - пользовательские конфигурации различных поколений
+
+Пример структуры одного элемента:
+[source,json]
+----
+{
+  "id": "cfg_collector",
+  "name": "Collector",
+  "family_id": "fam_collector",
+  "generation": 0,
+  "parent_config_id": null,
+  "model": "gemma3:4b",
+  "service": "collector",
+  "system_prompt": "...",
+  "options": {},
+  "description": "System Collector config...",
+  "created_at": "2026-05-20T23:51:32.397251+00:00",
+  "lineage": null,
+  "system": true,
+  "role": "collector"
+}
+----
+
+=== Семейства конфигураций (families)
+
+==== fam_test.json
+*Путь:* `storage/configs/families/fam_test.json`
+
+Описывает семейство конфигов с генеалогическим деревом.
+
+[source,json]
+----
+{
+  "id": "fam_0d4760fc",
+  "root_config_id": "cfg_c8349186",
+  "config_ids": [
+    "cfg_c8349186"
+  ],
+  "edges": [],
+  "created_at": "2026-05-21T08:14:03.928847+00:00"
+}
+----
+
+[cols="1,3"]
+|===
+|Поле |Описание
+
+|id
+|Уникальный идентификатор семейства
+
+|root_config_id
+|ID корневого (стартового) конфига семейства
+
+|config_ids
+|Список всех ID конфигов в этом семействе
+
+|edges
+|Граф связей между конфигами (родитель-потомок)
+
+|created_at
+|Время создания семейства
+|===
+
+== Тесты и Наборы тестов
+
+=== Отдельные тесты (items)
+
+==== test_dfs.json
+*Путь:* `storage/tests/items/test_dfs.json`
+
+Пример теста с описанием задачи.
+
+[source,json]
+----
+{
+  "id": "test_dfs",
+  "name": "dfs",
+  "system_prompt": null,
+  "user_prompt": "Напиши функцию dfs",
+  "checks": {},
+  "tags": [],
+  "created_at": "2026-05-22T10:19:09.044052+00:00"
+}
+----
+
+[cols="1,3"]
+|===
+|Поле |Описание
+
+|id
+|Уникальный идентификатор теста
+
+|name
+|Название теста
+
+|system_prompt
+|Системный промпт (может быть null)
+
+|user_prompt
+|Пользовательский запрос/задача
+
+|checks
+|Критерии проверки результата
+
+|tags
+|Теги для фильтрации
+
+|created_at
+|Время создания теста
+|===
+
+=== Наборы тестов (suites)
+
+==== suite_python.json
+*Путь:* `storage/tests/suites/suite_python.json`
+
+Набор тестов для группового выполнения.
+
+[source,json]
+----
+{
+  "id": "suite_python",
+  "name": "Python suite",
+  "description": "Базовый suite",
+  "test_ids": [
+    "test_palindrome"
+  ],
+  "created_at": "2026-04-27T00:00:00+00:00"
+}
+----
+
+=== Списки для фронтенда
+
+==== suites_list.json
+*Путь:* `storage/views/suites_list.json`
+
+Массив всех наборов тестов для отображения в интерфейсе.
+
+==== tests_list.json
+*Путь:* `storage/views/tests_list.json`
+
+Массив всех тестов для отображения в интерфейсе.
+
+== Результаты прогонов (Runs)
+
+=== Индексация прогонов
+
+==== index.json (в папке конкретного рана)
+*Путь:* `storage/runs/2026-05/test/index.json`
+
+Индекс результатов для конкретного рана. Содержит:
+
+- run_id, run_path - идентификатор и путь к рану
+- results - массив всех результатов
+- by_config - группировка по конфигам
+- by_test - группировка по тестам
+- groups - группы для коллектора (по parent/generation/test)
+
+Пример структуры результата:
+[source,json]
+----
+{
+  "result_id": "res_cfg_3392b39f_test_palindrome_child_1_...",
+  "config_id": "cfg_3392b39f",
+  "test_id": "test_palindrome_child_1",
+  "score": 0.0,
+  "passed": false,
+  "latency_ms": 0.0,
+  "has_response": false,
+  "has_error": true,
+  "error": {
+    "message": "Service not configured",
+    "details": "Сервис «orchestrator» не настроен..."
+  }
+}
+----
+
+=== Детали рана
+
+==== run.json
+*Путь:* `storage/runs/2026-05/test/run.json`
+
+Полная информация о руне:
+
+- selected_config_ids - выбранные конфиги
+- selected_test_ids - выбранные тесты
+- autotest - статус автоматических тестов
+- collector - информация о диспатче коллектора
+- collector_dispatches - история вызовов коллектора
+
+=== Результаты отдельных тестов
+
+==== res_*.json
+*Путь:* `storage/runs/2026-05/test/results/res_*.json`
+
+Детальный результат выполнения одного теста одним конфигом:
+
+[source,json]
+----
+{
+  "id": "res_...",
+  "config_id": "cfg_...",
+  "test_id": "test_...",
+  "model": "gemma3:14b",
+  "options_snapshot": {...},
+  "request_payload": {...},
+  "response_payload": {},
+  "response_text": "",
+  "score": 0.0,
+  "passed": false,
+  "scoring": {...},
+  "latency_ms": 0.0,
+  "error": {...}
+}
+----
+
+== Представления для фронтенда (Views)
+
+=== board_layout.json
+*Путь:* `storage/views/board_layout.json`
+
+Макет доски с позициями элементов.
+
+[source,json]
+----
+{
+  "positions": {
+    
+  }
+}
+----
+
+=== config_results/*.json
+*Путь:* `storage/views/config_results/cfg_test.json`
+
+Результаты для конкретной конфигурации.
+
+[source,json]
+----
+{
+  "config_id": "cfg_0247008a",
+  "results": []
+}
+----
+
+=== runs_list.json
+*Путь:* `storage/views/runs_list.json`
+
+Список всех прогонов для отображения в интерфейсе.
+
+[source,json]
+----
+{
+  "items": []
+}
+----
+
+=== suites_list.json
+*Путь:* `storage/views/suites_list.json`
+
+Список всех наборов тестов.
+
+=== tests_list.json
+*Путь:* `storage/views/tests_list.json`
+
+Список всех тестов.
+
+=== test_results/*.json
+*Путь:* `storage/views/test_results/test_dfs.json`
+
+Результаты для конкретного теста (агрегированные).
+
+=== leaderboard/*.json
+*Путь:* `storage/views/leaderboard/test_dfs.json`
+
+Лидерборд (лучшие конфиги) для теста.
+
+[source,json]
+----
+{
+  "test_id": "test_dfs",
+  "best_configs": [
+    {
+      "config_id": "cfg_3be9d003",
+      "config_name": "config_python_dev_branch_child_3",
+      "score": 0.0,
+      "latency_ms": 0.0,
+      "result_id": "...",
+      "run_id": "..."
+    }
+  ]
+}
+----
+
+=== families/*.json
+*Путь:* `storage/views/families/fam_test.json`
+
+Представление семейства для фронтенда (аналогично configs/families/).
+
+== Схема данных
+
+[source,plantuml]
+----
+@startuml
+package "Configs" {
+  [cfg_test.json]
+  [configs_list.json]
+  [fam_test.json]
+}
+
+package "Tests" {
+  [test_dfs.json]
+  [suite_python.json]
+  [tests_list.json]
+  [suites_list.json]
+}
+
+package "Runs" {
+  [index.json]
+  [run.json]
+  [res_*.json]
+  [runs_list.json]
+}
+
+package "Views" {
+  [board_layout.json]
+  [test_results/*.json]
+  [leaderboard/*.json]
+  [config_results/*.json]
+  [families/*.json]
+}
+
+' Relations
+[configs_list.json] --> [cfg_test.json] : содержит
+[fam_test.json] --> [cfg_test.json] : группирует
+[test_dfs.json] --> [suite_python.json] : входит в
+[run.json] --> [res_*.json] : генерирует
+[leaderboard/*.json] --> [res_*.json] : агрегирует
+@enduml
+----
+
+== Заключение
+
+Этот документ описывает структуру JSON-файлов в хранилище BenchMerge Backend. 
+Файлы организованы по принципу разделения исходных данных (configs/, tests/, runs/) 
+и представлений для фронтенда (views/). Это обеспечивает гибкость и масштабируемость системы.

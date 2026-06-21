@@ -1,0 +1,337 @@
+= BenchMerge Backend API Documentation
+:doctype: book
+:toc: left
+:toclevels: 3
+:numbered:
+:source-highlighter: highlightjs
+
+== Введение
+
+Данный документ описывает архитектуру и основные компоненты BenchMerge Backend — серверной части системы для управления конфигурациями LLM, тестирования и анализа результатов.
+
+== Структура проекта
+
+Проект организован следующим образом:
+
+* `app/core/` - базовые компоненты и настройки
+* `app/api/` - endpoints FastAPI
+* `app/services/` - бизнес-логика
+* `app/storage/` - работа с хранением данных
+* `app/models/` - Pydantic модели
+
+== Core Module
+
+=== settings.py
+
+Файл `benchmergebackend/app/core/settings.py` содержит глобальные настройки приложения.
+
+* `StorageSettings` - настройки системы хранения:
+** `storage_root` - корневая директория хранения (по умолчанию `/app/storage`)
+** `default_service` - сервис по умолчанию для запуска LLM (по умолчанию `ollama`)
+
+Настройки загружаются из переменных окружения или имеют значения по умолчанию.
+
+=== storage_types.py
+
+Файл `benchmergebackend/app/core/storage_types.py` определяет типы данных для работы с хранилищем:
+
+* `JsonItem` - базовая структура JSON-записи
+* `ConfigItem` - структура конфигурации LLM
+* `FamilyItem` - структура семейства конфигураций (для отслеживания lineage)
+* `TestItem` - структура теста
+* `SuiteItem` - структура набора тестов
+* `RunManifest` - манифест запуска
+* `RunIndex` - индекс результатов запуска
+* `ResultItem` - результат выполнения теста
+
+=== utils.py
+
+Файл `benchmergebackend/app/core/utils.py` содержит вспомогательные функции:
+
+* `generate_id()` - генерация уникальных идентификаторов
+* `get_timestamp()` - получение текущей временной метки
+* `safe_filename()` - создание безопасных имён файлов
+
+== Main Application
+
+=== main.py
+
+Файл `benchmergebackend/app/main.py` является точкой входа в приложение.
+
+Создаёт экземпляры роутеров и собирает их в единое приложение FastAPI.
+
+Основные endpoint'ы:
+
+* `GET /health` - проверка работоспособности
+* `POST /api/runs/execute` - выполнение запуска
+* `GET /api/configs` - получение списка конфигураций
+* `GET /api/tests` - получение списка тестов
+* `GET /api/suites` - получение наборов тестов
+* `GET /api/runs/{run_id}` - получение информации о запуске
+
+== Board Layout API
+
+=== board_layout.py
+
+Файл `benchmergebackend/app/api/board_layout.py` реализует endpoints для управления board layout.
+
+* `GET /api/board-layouts` - получение списка board layouts
+* `POST /api/board-layouts` - создание board layout
+* `GET /api/board-layouts/{layout_id}` - получение board layout по ID
+* `PATCH /api/board-layouts/{layout_id}` - обновление board layout
+* `DELETE /api/board-layouts/{layout_id}` - удаление board layout
+
+== Services Module
+
+=== config_service.py
+
+Файл `benchmergebackend/app/services/config_service.py` управляет конфигурациями LLM.
+
+Основные функции:
+
+* `create_config(payload)` - создание новой конфигурации
+* `update_config(config_id, patch)` - обновление конфигурации
+* `delete_config_deep(config_id)` - удаление конфигурации с потомками
+* `create_offspring(config_id, count)` - создание потомков конфигурации (для evolution)
+* `normalize_trigger(value)` - нормализация триггеров
+* `ensure_default_collector_config()` - создание конфигурации Collector
+
+Конфигурация содержит:
+
+* `id` - уникальный идентификатор
+* `name` - имя конфигурации
+* `model` - модель LLM (например, `gemma3:4b`)
+* `service` - сервис для запуска (`ollama`, `collector`)
+* `system_prompt` - системный промпт
+* `options` - параметры генерации (temperature, top_p и т.д.)
+* `trigger` - настройки автоматических триггеров
+* `family_id` - ссылка на семейство конфигураций
+* `generation` - поколение в evolutionary tree
+
+=== run_service.py
+
+Файл `benchmergebackend/app/services/run_service.py` управляет запусками тестов.
+
+Основные функции:
+
+* `create_run(suite_id, selected_test_ids, config_ids)` - создание и выполнение запуска
+* `select_best_result(run_id, test_id)` - выбор лучшего результата
+* `refresh_runs_view()` - обновление представления списков запусков
+* `refresh_result_views(results)` - обновление представлений результатов
+* `_run_collector_config_from_trigger()` - автоматический запуск Collector после source run
+
+Процесс запуска:
+
+1. Валидация входящих параметров
+2. Создание run_id и директории хранения
+3. Группировка конфигураций по родителям и поколениям
+4. Отправка запросов в Dispatcher для выполнения LLM
+5. Сбор результатов и подсчёт метрик
+6. Сохранение результатов в хранилище
+7. Автоматический запуск Collector при наличии триггеров
+
+=== collector_dispatch_service.py
+
+Файл `benchmergebackend/app/services/collector_dispatch_service.py` реализует логику Collector - сервиса для анализа результатов.
+
+Collector автоматически запускается когда:
+
+* Родительская конфигурация имеет `trigger.collector = true`
+* Все потомки конфигурации завершили выполнение
+* Есть как минимум 2 результата для сравнения
+
+=== promptbench_client.py
+
+Файл `benchmergebackend/app/services/promptbench_client.py` содержит клиент для взаимодействия с PromptBench.
+
+* `DispatcherClient` - клиент для отправки batch запросов
+* `stream_batch(items)` - потоковая отправка запросов и получение ответов
+
+=== realtime.py
+
+Файл `benchmergebackend/app/services/realtime.py` реализует WebSocket endpoints для real-time обновлений.
+
+* `connect(websocket, event_type)` - подключение к событиям
+* Отправка событий: `runs.changed`, `configs.changed`, `results.changed`
+
+=== board_view_service.py
+
+Файл `benchmergebackend/app/services/board_view_service.py` управляет представлениями board.
+
+* `get_board_view(board_id)` - получение board view
+* `refresh_board_view(board_id)` - обновление board view
+* `create_board_view(board_id)` - создание board view
+
+=== file_view_service.py
+
+Файл `benchmergebackend/app/services/file_view_service.py` управляет представлениями файлов.
+
+* `get_file_view(file_path)` - получение file view
+* `refresh_file_view(file_path)` - обновление file view
+
+=== suite_service.py
+
+Файл `benchmergebackend/app/services/suite_service.py` управляет наборами тестов.
+
+* `create_suite(payload)` - создание набора тестов
+* `update_suite(suite_id, patch)` - обновление набора тестов
+* `delete_suite(suite_id)` - удаление набора тестов
+* `list_suites()` - получение списка наборов тестов
+
+=== test_service.py
+
+Файл `benchmergebackend/app/services/test_service.py` управляет тестами.
+
+* `create_test(payload)` - создание теста
+* `update_test(test_id, patch)` - обновление теста
+* `delete_test(test_id)` - удаление теста
+* `list_tests()` - получение списка тестов
+
+=== scoring.py
+
+Файл `benchmergebackend/app/services/scoring.py` реализует логику подсчёта результатов.
+
+* `score_response(response_text, expected)` - оценка ответа LLM
+* Возвращает: `score`, `passed`, `checks_total`, `checks_passed`, `details`
+
+Метрики:
+
+* `score` - итоговая оценка (0.0 - 1.0)
+* `passed` - прошёл ли тест
+* `checks_total` - общее количество проверок
+* `checks_passed` - количество пройденных проверок
+
+== Storage Module
+
+=== config_store.py
+
+Хранение и получение конфигураций.
+
+* `save_config(config)` - сохранение конфигурации
+* `get_config(config_id)` - получение конфигурации
+* `list_configs()` - получение списка конфигураций
+* `save_family(family)` - сохранение семейства
+* `get_family(family_id)` - получение семейства
+
+=== test_store.py
+
+Хранение и получение тестов.
+
+* `save_test(test)` - сохранение теста
+* `get_test(test_id)` - получение теста
+* `list_tests()` - получение списка тестов
+
+=== suite_store.py
+
+Хранение и получение наборов тестов.
+
+* `save_suite(suite)` - сохранение набора тестов
+* `get_suite(suite_id)` - получение набора тестов
+* `list_suites()` - получение списка наборов тестов
+
+=== run_store.py
+
+Хранение и получение запусков и результатов.
+
+* `save_run_manifest(run_id, manifest, dt)` - сохранение манифеста запуска
+* `save_run_index(run_id, index, dt)` - сохранение индекса запуска
+* `save_result(run_id, result_id, result, dt)` - сохранение результата
+* `list_runs()` - получение списка запусков
+* `run_bundle(run_id, dt)` - получение всех данных запуска
+
+=== json_store.py
+
+Базовые операции с JSON файлами.
+
+* `read_json(path, default)` - чтение JSON файла
+* `write_json(path, data)` - запись JSON файла
+* `delete_json(path)` - удаление JSON файла
+* `list_json_files(directory)` - получение списка JSON файлов в директории
+
+=== paths.py
+
+Функции для построения путей в хранилище.
+
+* `config_item_path(config_id)` - путь к конфигурации
+* `test_item_path(test_id)` - путь к тесту
+* `run_dir(run_id, dt)` - директория запуска
+* `result_path(run_id, result_id, dt)` - путь к результату
+
+== Workflow: Evolution
+
+BenchMerge поддерживает evolutionary workflow:
+
+1. Создаётся базовая конфигурация (root config)
+2. Генерируются потомки с мутациями параметров (`create_offspring`)
+3. Запускаются тесты для всех конфигураций
+4. Collector анализирует результаты и выбирает лучшие
+5. Лучшие конфигурации становятся родителями следующего поколения
+
+Мутации параметров:
+
+* `temperature` - ±0.1, ±0.2
+* `top_p` - ±0.05
+* `top_k` - ±5, ±10
+* `num_ctx` - ±512
+* И другие параметры генерации
+
+== Workflow: Collector
+
+Collector автоматически запускается после завершения source run:
+
+1. Проверяется наличие триггера `trigger.collector = true` у родителя
+2. Проверяется, что все потомки завершили выполнение
+3. Collector получает путь к результатам как пользовательский промпт
+4. Collector анализирует результаты и создаёт новый результат
+5. Результат сохраняется и обновляются представления
+
+== API Endpoints
+
+=== Runs
+
+* `POST /api/runs` - создать и выполнить запуск
+* `GET /api/runs` - получить список запусков
+* `GET /api/runs/{run_id}` - получить информацию о запуске
+* `GET /api/runs/{run_id}/results` - получить результаты запуска
+
+=== Configs
+
+* `POST /api/configs` - создать конфигурацию
+* `GET /api/configs` - получить список конфигураций
+* `GET /api/configs/{config_id}` - получить конфигурацию
+* `PATCH /api/configs/{config_id}` - обновить конфигурацию
+* `DELETE /api/configs/{config_id}` - удалить конфигурацию
+* `POST /api/configs/{config_id}/offspring` - создать потомков
+
+=== Tests
+
+* `POST /api/tests` - создать тест
+* `GET /api/tests` - получить список тестов
+* `GET /api/tests/{test_id}` - получить тест
+* `PATCH /api/tests/{test_id}` - обновить тест
+* `DELETE /api/tests/{test_id}` - удалить тест
+
+=== Suites
+
+* `POST /api/suites` - создать набор тестов
+* `GET /api/suites` - получить список наборов тестов
+* `GET /api/suites/{suite_id}` - получить набор тестов
+* `PATCH /api/suites/{suite_id}` - обновить набор тестов
+* `DELETE /api/suites/{suite_id}` - удалить набор тестов
+
+=== Views
+
+* `GET /api/views/configs` - получить представление списка конфигураций
+* `GET /api/views/configs/{config_id}/results` - получить результаты конфигурации
+* `GET /api/views/tests/{test_id}/results` - получить результаты теста
+* `GET /api/views/tests/{test_id}/leaderboard` - получить лидерборд теста
+
+== Заключение
+
+BenchMerge Backend предоставляет полноценную инфраструктуру для:
+
+* Управления конфигурациями LLM
+* Evolution-ориентированного подбора параметров
+* Автоматического тестирования и анализа результатов
+* Real-time обновлений через WebSocket
+* Интеграции с внешними сервисами (Ollama, PromptBench)
