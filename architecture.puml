@@ -1,0 +1,152 @@
+@startuml architecture
+skinparam monochrome true
+
+title BenchMerge Backend Architecture
+
+package "Client" {
+    [Browser/Web Client] as Client
+}
+
+package "BenchMerge Backend" {
+    
+    package "API Layer" {
+        [main.py\nFastAPI App] as Main
+        
+        [Health Router] as Health
+        [Config Router] as Config
+        [Test Router] as Test
+        [Suite Router] as Suite
+        [Run Router] as Run
+        [File Router] as File
+        [Board Layout Router] as BoardLayout
+        [Gateway Router] as Gateway
+        [Realtime Router] as Realtime
+    }
+    
+    package "Services Layer" {
+        [ConfigService] as ConfigSvc
+        [TestService] as TestSvc
+        [SuiteService] as SuiteSvc
+        [RunService] as RunSvc
+        [ScoringService] as Scoring
+        [PromptBenchClient] as PBClient
+        [RealtimeManager] as RealtimeMgr
+    }
+    
+    package "Storage Layer" {
+        [JSON Store] as JsonStore
+        [Paths Module] as Paths
+        [ConfigStore] as ConfigStore
+        [TestStore] as TestStore
+        [SuiteStore] as SuiteStore
+        [RunStore] as RunStore
+    }
+}
+
+package "External" {
+    [Dispatcher Service] as Dispatcher
+    [Workshop API] as Workshop
+    [LaunchPad] as LaunchPad
+    [PromptBench] as PromptBench
+}
+
+package "JSON Storage" {
+    [configs/items/] as ConfigFiles
+    [configs/families/] as FamilyFiles
+    [tests/items/] as TestFiles
+    [tests/suites/] as SuiteFiles
+    [runs/] as RunFiles
+    [views/] as ViewFiles
+}
+
+' Client -> FastAPI routers
+Client --> Main
+Main --> Health
+Main --> Config
+Main --> Test
+Main --> Suite
+Main --> Run
+Main --> File
+Main --> BoardLayout
+Main --> Gateway
+Main --> Realtime
+
+' Routers -> Services
+Config --> ConfigSvc
+Test --> TestSvc
+Suite --> SuiteSvc
+Run --> RunSvc
+Run --> Scoring
+File --> ViewFiles
+Gateway --> PBClient
+Realtime --> RealtimeMgr
+
+' Services -> Storage
+ConfigSvc --> ConfigStore
+ConfigSvc --> JsonStore
+TestSvc --> TestStore
+TestSvc --> JsonStore
+SuiteSvc --> SuiteStore
+SuiteSvc --> JsonStore
+RunSvc --> RunStore
+RunSvc --> JsonStore
+RunSvc --> Scoring
+
+' Storage modules use Paths
+ConfigStore --> Paths
+TestStore --> Paths
+SuiteStore --> Paths
+RunStore --> Paths
+
+' Storage -> JSON Files
+ConfigStore --> ConfigFiles
+ConfigStore --> FamilyFiles
+TestStore --> TestFiles
+SuiteStore --> SuiteFiles
+RunStore --> RunFiles
+RunStore --> ViewFiles
+
+' Gateway route -> WorkshopClient -> external workshop
+Gateway --> PBClient
+PBClient --> Dispatcher
+PBClient --> Workshop
+PBClient --> LaunchPad
+PBClient --> PromptBench
+
+' Gateway route -> RunService -> request/response/error JSON
+Run --> RunSvc
+RunSvc ..> Gateway : orchestrates via PBClient
+RunSvc ..> Scoring : validate & score
+
+' Realtime events
+Realtime --> RealtimeMgr
+ConfigSvc .> RealtimeMgr : publish events
+TestSvc .> RealtimeMgr : publish events
+RunSvc .> RealtimeMgr : publish events
+RealtimeMgr --> Client : WebSocket/SSE
+
+note right of ConfigFiles
+  configs/items/cfg_*.json
+  configs/families/fam_*.json
+end note
+
+note right of TestFiles
+  tests/items/test_*.json
+  tests/suites/suite_*.json
+end note
+
+note right of RunFiles
+  runs/YYYY-MM/run_xxx/
+    run.json
+    index.json
+    results/res_*.json
+end note
+
+note right of ViewFiles
+  views/runs_list.json
+  views/configs_list.json
+  views/leaderboard/
+  views/config_results/
+end note
+
+enduml

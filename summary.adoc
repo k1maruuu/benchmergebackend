@@ -1,419 +1,333 @@
-= BenchMerge Backend - Sводная Документация
+= BenchMerge Backend — Сводная документация
 :doctype: book
 :toc: left
 :toclevels: 3
 :numbered:
-:source-highlighter: highlightjs
 
 == Назначение проекта
 
-BenchMerge Backend — это серверная часть системы для управления конфигурациями LLM, тестирования моделей и анализа результатов. Проект реализует:
+BenchMerge Backend — это серверная часть системы для управления конфигурациями LLM, тестирования и анализа результатов. Система поддерживает:
 
-* Управление конфигурациями AI-моделей с поддержкой генеалогии (семейства конфигов)
-* Evolution-ориентированный подбор параметров через создание потомков с мутациями
-* Автоматизированное тестирование и оценку результатов через Collector
-* Интеграцию с внешними сервисами через Dispatcher (PromptBench)
+* Эволюционный подбор параметров моделей (evolution workflow)
+* Автоматическое тестирование и валидацию результатов
+* Интеграцию с внешними сервисами (Dispatcher, Workshop, LaunchPad)
+* Файловое JSON-хранилище для персистентности данных
 * Real-time обновления через WebSocket/SSE
 
 == Точка входа приложения
 
-**Файл:** `benchmergebackend/app/main.py`
+Точка входа: `benchmergebackend/app/main.py`
 
-Точка входа создаёт экземпляр FastAPI и регистрирует роутеры:
+Основные компоненты инициализации:
 
-[source,python]
-----
-from fastapi import FastAPI
+* `FastAPI` приложение с middleware CORS
+* `lifespan` контекст для инициализации хранилища и конфигураций
+* Подключение 10 роутеров (health, configs, tests, suites, runs, files, board-layout, gateway, realtime, board)
 
-app = FastAPI(
-    title="BenchFile",
-    description="File-based benchmark/config storage and Dispatcher launcher",
-    version="0.2.0",
-)
-----
+Ключевые вызовы при старте:
 
-Инициализация происходит через контекстный менеджер `lifespan`:
+* `initialize_storage_tree()` — создание структуры директорий
+* `ensure_all_configs_have_trigger()` — валидация конфигураций
+* `ensure_default_collector_config()` — создание дефолтной конфигурации Collector
 
-* `initialize_storage_tree()` - создание директорий хранилища
-* `ensure_all_configs_have_trigger()` - миграция конфигов без триггеров
-* `ensure_default_collector_config()` - создание системной конфигурации Collector
+== Подключённые роутеры
 
-== Архитектурные слои
+| Роутер | Путь | Описание |
+|--------|------|----------|
+| `health_router` | `/health` | Проверка здоровья |
+| `board_router` | `/board` | Управление досками |
+| `configs_router` | `/configs` | Управление конфигурациями LLM |
+| `tests_router` | `/tests` | Управление тестами |
+| `suites_router` | `/suites` | Управление наборами тестов |
+| `runs_router` | `/runs` | Управление запусками |
+| `files_router` | `/files` | Управление файлами |
+| `board_layout_router` | `/board-layout` | Layout доски |
+| `gateway_router` | `/gateway` | Gateway к внешним сервисам |
+| `realtime_router` | `/realtime` | WebSocket/SSE события |
 
-=== 1. Storage Layer (Приложение -> Хранилище)
+== API-группы
 
-Слой персистентности данных через JSON-файлы. Все данные хранятся в файловой системе.
+=== Configs (`/configs`)
 
-[cols="1,3"]
-|===
-|Модуль |Назначение
+Управление конфигурациями LLM с поддержкой семейств и триггеров:
 
-|`app/storage/json_store.py`
-|Базовые операции: `read_json()`, `write_json()`, `delete_json()`, `list_json_files()`
+* `GET /configs` — список всех конфигураций
+* `POST /configs` — создать конфигурацию
+* `GET /configs/{id}` — получить конфигурацию
+* `PUT /configs/{id}` — обновить конфигурацию
+* `DELETE /configs/{id}` — удалить конфигурацию
+* `PATCH /configs/{id}/trigger` — обновить триггер
+* `PATCH /configs/{id}/options` — обновить опции
+* `POST /configs/{id}/offspring` — создать потомков
 
-|`app/storage/paths.py`
-|Генерация путей к файлам (configs/, tests/, runs/, views/)
+=== Tests (`/tests`)
 
-|`app/storage/config_store.py`
-|CRUD для конфигураций и семейств
+Управление тестовыми заданиями:
 
-|`app/storage/test_store.py`
-|CRUD для тестов
+* `GET /tests` — список тестов
+* `POST /tests` — создать тест
+* `GET /tests/{id}` — получить тест
+* `PUT /tests/{id}` — обновить тест
+* `DELETE /tests/{id}` — удалить тест
 
-|`app/storage/suite_store.py`
-|CRUD для наборов тестов
+=== Suites (`/suites`)
 
-|`app/storage/run_store.py`
-|Хранение результатов запусков (manifest, index, results)
-|===
+Управление наборами тестов:
 
-**Структура хранилища:**
+* `GET /suites` — список сьютов
+* `POST /suites` — создать сьют
+* `GET /suites/{id}` — получить сьют
+* `PUT /suites/{id}` — обновить сьют
+* `DELETE /suites/{id}` — удалить сьют
+
+=== Runs (`/runs`)
+
+Управление запусками тестов:
+
+* `GET /runs` — список запусков
+* `POST /runs` — создать и запустить
+* `GET /runs/{id}` — получить запуск
+* `GET /runs/{id}/results` — результаты запуска
+* `POST /runs/{id}/select-best` — выбрать лучший результат
+* `POST /collector/dispatch` — запустить Collector
+
+=== Gateway (`/gateway`)
+
+Прокси к внешним сервисам:
+
+* `GET /gateway/connections` — список сервисов
+* `GET /gateway/health` — health check
+* `POST /gateway/run` — запустить сервис
+* `POST /gateway/stop` — остановить сервис
+* `POST /gateway/launchpad/set-system-prompt` — установить системный промпт
+* `POST /gateway/launchpad/pull` — получить payload нода
+* `POST /gateway/launchpad/set-payload` — установить payload
+
+== Schemas
+
+Основные Pydantic схемы:
+
+=== ConfigCreate
+
+Создание конфигурации:
+
+* `config_id` (Optional[str]) — пользовательский ID
+* `name` (str) — название
+* `model` (str) — модель LLM (по умолчанию `gemma3:4b`)
+* `service` (Optional[str]) — сервис Dispatcher
+* `node` (Optional[str]) — LaunchPad node
+* `system_prompt` (Optional[str]) — системный промпт
+* `options` (Dict[str, Any]) — параметры генерации
+* `description` (Optional[str]) — описание
+* `trigger` (Optional[ConfigTrigger]) — флаги автоматизации
+
+=== ConfigTrigger
+
+Флаги автоматизации:
+
+* `collector` (bool) — активировать Collector trigger
+
+=== RunCreate
+
+Создание запуска:
+
+* `suite_id` (Optional[str]) — ID сьюта
+* `selected_test_ids` (Optional[List[str]]) — явный список тестов
+* `config_ids` (List[str]) — список ID конфигураций
+* `service` (Optional[str]) — сервис Dispatcher
+
+=== ResultSchema
+
+Результат теста:
+
+* `result_id` (str)
+* `run_id` (str)
+* `config_id` (str)
+* `test_id` (str)
+* `response_text` (str)
+* `score` (float) — оценка 0.0-1.0
+* `passed` (bool)
+* `latency_ms` (int)
+
+== Services
+
+Модули бизнес-логики в `benchmergebackend/app/services/`:
+
+| Сервис | Описание |
+|--------|----------|
+| `config_service.py` | Управление конфигурациями и семействами |
+| `test_service.py` | Управление тестами |
+| `suite_service.py` | Управление наборами тестов |
+| `run_service.py` | Выполнение запусков и управление результатами |
+| `scoring.py` | Подсчёт результатов и валидация |
+| `promptbench_client.py` | HTTP-клиент для Dispatcher |
+| `realtime.py` | WebSocket менеджер |
+| `board_view_service.py` | Board представления |
+| `file_view_service.py` | Файловые представления |
+
+Ключевые функции:
+
+* `create_config()` — создание конфигурации
+* `create_run()` — создание и выполнение запуска
+* `create_offspring()` — создание потомков с мутациями
+* `score_response()` — оценка ответов LLM
+* `stream_batch()` — потоковая отправка запросов в Dispatcher
+* `publish_event()` — публикация real-time событий
+
+== Файловое JSON Storage
+
+Хранилище данных в `benchmergebackend/app/storage/`:
+
+=== Структура директорий
 
 [source]
 ----
 storage/
 ├── configs/
-│   ├── items/          # Отдельные конфигурации (*.json)
-│   └── families/       # Семейства конфигов (*.json)
+│   ├── items/           # cfg_*.json
+│   └── families/        # fam_*.json
 ├── tests/
-│   ├── items/          # Тесты (*.json)
-│   └── suites/         # Наборы тестов (*.json)
+│   └── items/           # test_*.json
+├── suites/
+│   └── items/           # suite_*.json
 ├── runs/
-│   └── {YYYY-MM}/      # Результаты по месяцам
-│       └── {run_id}/
+│   └── 2024-12/         #按月分组
+│       └── run_xxx/
 │           ├── run.json
 │           ├── index.json
 │           └── results/
-│               └── {result_id}.json
-└── views/              # Кэшированные представления
-    ├── configs_list.json
-    ├── tests_list.json
-    ├── suites_list.json
+│               └── res_*.json
+└── views/
     ├── runs_list.json
-    ├── board_layout.json
+    ├── configs_list.json
     ├── leaderboard/
     ├── config_results/
     ├── test_results/
     └── families/
 ----
 
-=== 2. Service Layer (Бизнес-логика)
+=== Модули хранения
 
-Модули бизнес-логики, работающие с хранилищем и внешними сервисами.
+| Модуль | Описание |
+|--------|----------|
+| `json_store.py` | Базовые операции с JSON-файлами |
+| `paths.py` | Генерация путей к файлам |
+| `config_store.py` | Хранение конфигураций |
+| `test_store.py` | Хранение тестов |
+| `suite_store.py` | Хранение сьютов |
+| `run_store.py` | Хранение запусков |
 
-[cols="1,3"]
-|===
-|Модуль |Назначение
+=== Storage сущности
 
-|`app/services/config_service.py`
-|Управление конфигами: создание, обновление, offspring, family, trigger
+* **Config** — конфигурация LLM с family_id, generation, parent_config_id
+* **Family** — семейство конфигураций с parent-child связями
+* **Test** — тестовое задание с prompts и checks
+* **Suite** — набор тестов
+* **Run** — запуск с манифестом, индексом и результатами
+* **Result** — результат теста с метриками
 
-|`app/services/test_service.py`
-|Управление тестами: создание, обновление, удаление
+== Configs, Tests и Runs
 
-|`app/services/suite_service.py`
-|Управление наборами тестов
+=== Workflow: Evolution
 
-|`app/services/run_service.py`
-|Выполнение прогонов, автоматический Collector, лидерборды
+1. Создаётся базовая конфигурация (root config, generation=0)
+2. Генерируются потомки с мутациями (`create_offspring`)
+3. Запускаются тесты для всех конфигураций
+4. Collector анализирует результаты
+5. Лучшие конфигурации становятся родителями следующего поколения
 
-|`app/services/scoring.py`
-|Оценка результатов по check-правилам
+=== Mutation Strategy
 
-|`app/services/promptbench_client.py`
-|HTTP-клиент для Dispatcher (batch, service, launchpad)
+Мутации опций генерации:
 
-|`app/services/realtime.py`
-|WebSocket менеджер для real-time событий
+* `temperature` — ±0.1, ±0.2
+* `top_p` — ±0.05
+* `top_k` — ±5, ±10
+* `repeat_penalty` — ±0.1
+* `num_ctx` — ±512
 
-|`app/services/file_view_service.py`
-|Построение деревьев файлов
-|===
+=== Workflow: Collector Trigger
 
-=== 3. API Layer (Роутеры)
+Автоматический запуск Collector:
 
-HTTP роутеры FastAPI для REST API и WebSocket endpoints.
+1. Родительская конфигурация имеет `trigger.collector = true`
+2. Все потомки завершили выполнение
+3. Collector получает путь к результатам
+4. Collector анализирует и создаёт новый результат
 
-[cols="1,3"]
-|===
-|Роутер |Назначение
+== SSE Gateway
 
-|`app/api/routers/configs.py`
-|CRUD для конфигураций: `GET /configs`, `POST /configs`, `PATCH /configs/{id}`, `DELETE /configs/{id}`
+WebSocket/SSE поддержка через `realtime_router`:
 
-|`app/api/routers/tests.py`
-|CRUD для тестов
+* `GET /realtime/events` — SSE endpoint
+* `connect(websocket)` — WebSocket подключение
 
-|`app/api/routers/suites.py`
-|CRUD для наборов тестов
+Поддерживаемые события:
 
-|`app/api/routers/runs.py`
-|Выполнение прогонов: `POST /runs/run`, `GET /runs`
+* `config.created/updated/deleted`
+* `run.started/completed/failed`
+* `collector.triggered`
+* `results.changed`
 
-|`app/api/routers/gateway.py`
-|Proxy к Dispatcher: batch, service, launchpad operations
+== Интеграция с Workshop
 
-|`app/api/routers/realtime.py`
-|WebSocket endpoint: `WS /realtime`
+Интеграция через `gateway_router` и `promptbench_client.py`:
 
-|`app/api/routers/board.py`
-|Управление доской (позиции элементов)
+=== Доступные сервисы Dispatcher
 
-|`app/api/routers/board_layout.py`
-|Управление layout-настройками доски
+* `workshop` — Workshop API
+* `orchestrator` — Orchestrator API
+* `puml_gen` — PlantUML генератор
 
-|`app/api/routers/files.py`
-|Просмотр дерева файлов хранилища
+=== LaunchPad интеграция
 
-|`app/api/routers/health.py`
-|Health check endpoint
-|===
+* `set-system-prompt` — установка системного промпта нода
+* `pull` — получение payload нода
+* `set-payload` — применение payload обратно
 
-== Ключевые сущности
-
-=== Конфигурация (Config)
-
-Описывает модель AI, сервис, параметры генерации и триггеры.
+=== Пример запроса
 
 [source,json]
 ----
+POST /gateway/run
 {
-  "id": "cfg_abc123",
-  "name": "My Config",
-  "family_id": "fam_xyz789",
-  "generation": 1,
-  "parent_config_id": "cfg_parent",
-  "model": "gemma3:4b",
   "service": "workshop",
-  "system_prompt": "Вы эксперт...",
-  "options": {
-    "temperature": 0.7,
-    "top_p": 0.9
-  },
-  "trigger": {
-    "collector": true
-  }
+  "node": "god_node",
+  "prompt": "Ты разработчик по Rust"
 }
 ----
 
-**Поля:**
+== Переменные окружения
 
-|===
-|Поле |Тип |Описание
+| Переменная | Описание | Значение по умолчанию |
+|------------|----------|----------------------|
+| `BENCHFILE_STORAGE_ROOT` | Корневая директория хранилища | `/app/storage` |
+| `BENCHFILE_DEFAULT_SERVICE` | Сервис Dispatcher по умолчанию | `ollama` |
+| `DISPATCHER_BASE_URL` | URL Dispatcher | `http://dispatcher:8000` |
+| `PROMPTBENCH_BASE_URL` | URL PromptBench | `http://promptbench:8000` |
 
-|id
-|str
-|Уникальный ID
+== Ограничения MVP
 
-|family_id
-|str
-|ID семейства (для генеалогии)
+1. **Файловое хранилище** — не подходит для высоконагруженных сценариев
+2. **Отсутствие транзакций** — нет гарантированной атомарности операций
+3. **In-memory WebSocket** — не масштабируется на несколько инстансов
+4. **Нет автентификации** — открытое API
+5. **Нет rate limiting** — защита от злоупотреблений отсутствует
+6. **JSON-only validation** — базовая валидация опций LLM
 
-|generation
-|int
-|Поколение в дереве (0 - корень)
+== Ссылки на будущие документы
 
-|parent_config_id
-|str \| null
-|ID родителя
+* `architecture.puml` — диаграмма архитектуры PlantUML
+* `architecture_map.json` — машиночитаемая карта проекта
+* `main.adoc` — основная документация
+* `routes.adoc` — подробное описание роутеров
+* `schemas.adoc` — описание Pydantic схем
+* `services.adoc` — описание сервисов
+* `storage.adoc` — описание хранилища
+* `starting.adoc` — информация о запуске
 
-|model
-|str
-|Имя LLM модели
+== Изменения и версии
 
-|service
-|str
-|Сервис для выполнения (orchestrator, workshop, collector)
+Версия API: 1.0
 
-|options
-|dict
-|Параметры генерации AI
-
-|trigger
-|dict
-|Флаги автоматизации (collector, improver)
-|===
-
-=== Семейство конфигураций (Family)
-
-Генеалогическое дерево конфигураций.
-
-[source,json]
-----
-{
-  "id": "fam_xyz789",
-  "root_config_id": "cfg_root",
-  "config_ids": ["cfg_root", "cfg_child1", "cfg_child2"],
-  "edges": [
-    {"from": "cfg_root", "to": "cfg_child1"},
-    {"from": "cfg_root", "to": "cfg_child2"}
-  ]
-}
-----
-
-=== Тест (Test)
-
-Описание задачи для модели.
-
-[source,json]
-----
-{
-  "id": "test_palindrome",
-  "name": "Palindrome",
-  "system_prompt": null,
-  "user_prompt": "Проверь палиндром",
-  "checks": {
-    "response_not_empty": {},
-    "json_valid": {}
-  }
-}
-----
-
-=== Набор тестов (Suite)
-
-Группа тестов для выполнения вместе.
-
-[source,json]
-----
-{
-  "id": "suite_python",
-  "name": "Python suite",
-  "test_ids": ["test_palindrome", "test_dfs"]
-}
-----
-
-=== Запуск (Run)
-
-Результаты выполнения набора тестов для конфигураций.
-
-[source,json]
-----
-{
-  "run_id": "run_abc123",
-  "selected_config_ids": ["cfg_1", "cfg_2"],
-  "selected_test_ids": ["test_1", "test_2"],
-  "results": [
-    {
-      "result_id": "res_...",
-      "config_id": "cfg_1",
-      "test_id": "test_1",
-      "score": 0.8,
-      "passed": true
-    }
-  ]
-}
-----
-
-== Flow выполнения прогона
-
-. Пользователь выбирает конфиги и тесты
-. Сервис `run_service.create_run()`:
-  * Создаёт манифест запуска
-  * Формирует batch-запросы для Dispatcher
-  * Отправляет запросы через `promptbench_client`
-. Получение результатов:
-  * Парсинг ответов
-  * Оценка через `scoring.score_response()`
-  * Сохранение в `run_store`
-. Авто-триггер Collector:
-  * Если у конфига `trigger.collector=true`:
-  * Запускается Collector конфигурация для анализа результатов
-  * Создаются offspring с мутациями
-. Обновление представлений:
-  * Кэши `views/*` обновляются
-  * WebSocket события для real-time клиентов
-
-== Конфигурация приложения
-
-Переменные окружения (префикс `BENCHFILE_`):
-
-[cols="1,2,3"]
-|===
-|Переменная |Значение по умолчанию |Описание
-
-|BENCHFILE_APP_NAME
-|BenchFile
-|Название приложения
-
-|BENCHFILE_APP_PORT
-|8100
-|Порт сервера
-
-|BENCHFILE_STORAGE_ROOT
-|<root>/storage
-|Корневая директория хранилища
-
-|BENCHFILE_DISPATCHER_BASE_URL
-|http://localhost:8020
-|URL Dispatcher (PromptBench)
-
-|BENCHFILE_DEFAULT_MODEL
-|qwen3:14b
-|Модель по умолчанию
-
-|BENCHFILE_DEFAULT_SERVICE
-|workshop
-|Сервис по умолчанию
-|===
-
-== Запуск приложения
-
-=== Локально
-
-[source,bash]
-----
-cd benchmergebackend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
-----
-
-=== Через Docker
-
-[source,bash]
-----
-docker build -t benchmerge-backend .
-docker run -p 8100:8100 -v ./storage:/app/storage benchmerge-backend
-----
-
-== Зависимости
-
-[cols="1,3"]
-|===
-|Пакет |Версия |Назначение
-
-|fastapi
-|>=0.115.0
-|Веб-фреймворк
-
-|uvicorn
-|>=0.30.0
-|ASGI сервер
-
-|pydantic
-|>=2.8.0
-|Валидация данных
-
-|pydantic-settings
-|>=2.4.0
-|Конфигурация через env
-
-|httpx
-|>=0.27.0
-|Async HTTP клиент
-
-|websockets
-|>=16.0
-|WebSocket поддержка
-|===
-
-== Референсы
-
-* **API схемы:** `benchmergebackend/docs/schemas.adoc`
-* **Роуты:** `benchmergebackend/docs/routes.adoc`
-* **Сервисы:** `benchmergebackend/docs/services.adoc`
-* **Хранилище:** `benchmergebackend/docs/storage.adoc`
-* **Примеры файлов:** `benchmergebackend/docs/storage_example.adoc`
-* **Запуск:** `benchmergebackend/docs/starting.adoc`
-
-== Архитектурная схема
-
-См. `benchmergebackend/docs/architecture.puml` для диаграммы PlantUML.
+Последнее обновление: 2026
