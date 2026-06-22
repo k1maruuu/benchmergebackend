@@ -1,0 +1,419 @@
+= BenchMerge Backend - Sводная Документация
+:doctype: book
+:toc: left
+:toclevels: 3
+:numbered:
+:source-highlighter: highlightjs
+
+== Назначение проекта
+
+BenchMerge Backend — это серверная часть системы для управления конфигурациями LLM, тестирования моделей и анализа результатов. Проект реализует:
+
+* Управление конфигурациями AI-моделей с поддержкой генеалогии (семейства конфигов)
+* Evolution-ориентированный подбор параметров через создание потомков с мутациями
+* Автоматизированное тестирование и оценку результатов через Collector
+* Интеграцию с внешними сервисами через Dispatcher (PromptBench)
+* Real-time обновления через WebSocket/SSE
+
+== Точка входа приложения
+
+**Файл:** `benchmergebackend/app/main.py`
+
+Точка входа создаёт экземпляр FastAPI и регистрирует роутеры:
+
+[source,python]
+----
+from fastapi import FastAPI
+
+app = FastAPI(
+    title="BenchFile",
+    description="File-based benchmark/config storage and Dispatcher launcher",
+    version="0.2.0",
+)
+----
+
+Инициализация происходит через контекстный менеджер `lifespan`:
+
+* `initialize_storage_tree()` - создание директорий хранилища
+* `ensure_all_configs_have_trigger()` - миграция конфигов без триггеров
+* `ensure_default_collector_config()` - создание системной конфигурации Collector
+
+== Архитектурные слои
+
+=== 1. Storage Layer (Приложение -> Хранилище)
+
+Слой персистентности данных через JSON-файлы. Все данные хранятся в файловой системе.
+
+[cols="1,3"]
+|===
+|Модуль |Назначение
+
+|`app/storage/json_store.py`
+|Базовые операции: `read_json()`, `write_json()`, `delete_json()`, `list_json_files()`
+
+|`app/storage/paths.py`
+|Генерация путей к файлам (configs/, tests/, runs/, views/)
+
+|`app/storage/config_store.py`
+|CRUD для конфигураций и семейств
+
+|`app/storage/test_store.py`
+|CRUD для тестов
+
+|`app/storage/suite_store.py`
+|CRUD для наборов тестов
+
+|`app/storage/run_store.py`
+|Хранение результатов запусков (manifest, index, results)
+|===
+
+**Структура хранилища:**
+
+[source]
+----
+storage/
+├── configs/
+│   ├── items/          # Отдельные конфигурации (*.json)
+│   └── families/       # Семейства конфигов (*.json)
+├── tests/
+│   ├── items/          # Тесты (*.json)
+│   └── suites/         # Наборы тестов (*.json)
+├── runs/
+│   └── {YYYY-MM}/      # Результаты по месяцам
+│       └── {run_id}/
+│           ├── run.json
+│           ├── index.json
+│           └── results/
+│               └── {result_id}.json
+└── views/              # Кэшированные представления
+    ├── configs_list.json
+    ├── tests_list.json
+    ├── suites_list.json
+    ├── runs_list.json
+    ├── board_layout.json
+    ├── leaderboard/
+    ├── config_results/
+    ├── test_results/
+    └── families/
+----
+
+=== 2. Service Layer (Бизнес-логика)
+
+Модули бизнес-логики, работающие с хранилищем и внешними сервисами.
+
+[cols="1,3"]
+|===
+|Модуль |Назначение
+
+|`app/services/config_service.py`
+|Управление конфигами: создание, обновление, offspring, family, trigger
+
+|`app/services/test_service.py`
+|Управление тестами: создание, обновление, удаление
+
+|`app/services/suite_service.py`
+|Управление наборами тестов
+
+|`app/services/run_service.py`
+|Выполнение прогонов, автоматический Collector, лидерборды
+
+|`app/services/scoring.py`
+|Оценка результатов по check-правилам
+
+|`app/services/promptbench_client.py`
+|HTTP-клиент для Dispatcher (batch, service, launchpad)
+
+|`app/services/realtime.py`
+|WebSocket менеджер для real-time событий
+
+|`app/services/file_view_service.py`
+|Построение деревьев файлов
+|===
+
+=== 3. API Layer (Роутеры)
+
+HTTP роутеры FastAPI для REST API и WebSocket endpoints.
+
+[cols="1,3"]
+|===
+|Роутер |Назначение
+
+|`app/api/routers/configs.py`
+|CRUD для конфигураций: `GET /configs`, `POST /configs`, `PATCH /configs/{id}`, `DELETE /configs/{id}`
+
+|`app/api/routers/tests.py`
+|CRUD для тестов
+
+|`app/api/routers/suites.py`
+|CRUD для наборов тестов
+
+|`app/api/routers/runs.py`
+|Выполнение прогонов: `POST /runs/run`, `GET /runs`
+
+|`app/api/routers/gateway.py`
+|Proxy к Dispatcher: batch, service, launchpad operations
+
+|`app/api/routers/realtime.py`
+|WebSocket endpoint: `WS /realtime`
+
+|`app/api/routers/board.py`
+|Управление доской (позиции элементов)
+
+|`app/api/routers/board_layout.py`
+|Управление layout-настройками доски
+
+|`app/api/routers/files.py`
+|Просмотр дерева файлов хранилища
+
+|`app/api/routers/health.py`
+|Health check endpoint
+|===
+
+== Ключевые сущности
+
+=== Конфигурация (Config)
+
+Описывает модель AI, сервис, параметры генерации и триггеры.
+
+[source,json]
+----
+{
+  "id": "cfg_abc123",
+  "name": "My Config",
+  "family_id": "fam_xyz789",
+  "generation": 1,
+  "parent_config_id": "cfg_parent",
+  "model": "gemma3:4b",
+  "service": "workshop",
+  "system_prompt": "Вы эксперт...",
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
+  "trigger": {
+    "collector": true
+  }
+}
+----
+
+**Поля:**
+
+|===
+|Поле |Тип |Описание
+
+|id
+|str
+|Уникальный ID
+
+|family_id
+|str
+|ID семейства (для генеалогии)
+
+|generation
+|int
+|Поколение в дереве (0 - корень)
+
+|parent_config_id
+|str \| null
+|ID родителя
+
+|model
+|str
+|Имя LLM модели
+
+|service
+|str
+|Сервис для выполнения (orchestrator, workshop, collector)
+
+|options
+|dict
+|Параметры генерации AI
+
+|trigger
+|dict
+|Флаги автоматизации (collector, improver)
+|===
+
+=== Семейство конфигураций (Family)
+
+Генеалогическое дерево конфигураций.
+
+[source,json]
+----
+{
+  "id": "fam_xyz789",
+  "root_config_id": "cfg_root",
+  "config_ids": ["cfg_root", "cfg_child1", "cfg_child2"],
+  "edges": [
+    {"from": "cfg_root", "to": "cfg_child1"},
+    {"from": "cfg_root", "to": "cfg_child2"}
+  ]
+}
+----
+
+=== Тест (Test)
+
+Описание задачи для модели.
+
+[source,json]
+----
+{
+  "id": "test_palindrome",
+  "name": "Palindrome",
+  "system_prompt": null,
+  "user_prompt": "Проверь палиндром",
+  "checks": {
+    "response_not_empty": {},
+    "json_valid": {}
+  }
+}
+----
+
+=== Набор тестов (Suite)
+
+Группа тестов для выполнения вместе.
+
+[source,json]
+----
+{
+  "id": "suite_python",
+  "name": "Python suite",
+  "test_ids": ["test_palindrome", "test_dfs"]
+}
+----
+
+=== Запуск (Run)
+
+Результаты выполнения набора тестов для конфигураций.
+
+[source,json]
+----
+{
+  "run_id": "run_abc123",
+  "selected_config_ids": ["cfg_1", "cfg_2"],
+  "selected_test_ids": ["test_1", "test_2"],
+  "results": [
+    {
+      "result_id": "res_...",
+      "config_id": "cfg_1",
+      "test_id": "test_1",
+      "score": 0.8,
+      "passed": true
+    }
+  ]
+}
+----
+
+== Flow выполнения прогона
+
+. Пользователь выбирает конфиги и тесты
+. Сервис `run_service.create_run()`:
+  * Создаёт манифест запуска
+  * Формирует batch-запросы для Dispatcher
+  * Отправляет запросы через `promptbench_client`
+. Получение результатов:
+  * Парсинг ответов
+  * Оценка через `scoring.score_response()`
+  * Сохранение в `run_store`
+. Авто-триггер Collector:
+  * Если у конфига `trigger.collector=true`:
+  * Запускается Collector конфигурация для анализа результатов
+  * Создаются offspring с мутациями
+. Обновление представлений:
+  * Кэши `views/*` обновляются
+  * WebSocket события для real-time клиентов
+
+== Конфигурация приложения
+
+Переменные окружения (префикс `BENCHFILE_`):
+
+[cols="1,2,3"]
+|===
+|Переменная |Значение по умолчанию |Описание
+
+|BENCHFILE_APP_NAME
+|BenchFile
+|Название приложения
+
+|BENCHFILE_APP_PORT
+|8100
+|Порт сервера
+
+|BENCHFILE_STORAGE_ROOT
+|<root>/storage
+|Корневая директория хранилища
+
+|BENCHFILE_DISPATCHER_BASE_URL
+|http://localhost:8020
+|URL Dispatcher (PromptBench)
+
+|BENCHFILE_DEFAULT_MODEL
+|qwen3:14b
+|Модель по умолчанию
+
+|BENCHFILE_DEFAULT_SERVICE
+|workshop
+|Сервис по умолчанию
+|===
+
+== Запуск приложения
+
+=== Локально
+
+[source,bash]
+----
+cd benchmergebackend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+----
+
+=== Через Docker
+
+[source,bash]
+----
+docker build -t benchmerge-backend .
+docker run -p 8100:8100 -v ./storage:/app/storage benchmerge-backend
+----
+
+== Зависимости
+
+[cols="1,3"]
+|===
+|Пакет |Версия |Назначение
+
+|fastapi
+|>=0.115.0
+|Веб-фреймворк
+
+|uvicorn
+|>=0.30.0
+|ASGI сервер
+
+|pydantic
+|>=2.8.0
+|Валидация данных
+
+|pydantic-settings
+|>=2.4.0
+|Конфигурация через env
+
+|httpx
+|>=0.27.0
+|Async HTTP клиент
+
+|websockets
+|>=16.0
+|WebSocket поддержка
+|===
+
+== Референсы
+
+* **API схемы:** `benchmergebackend/docs/schemas.adoc`
+* **Роуты:** `benchmergebackend/docs/routes.adoc`
+* **Сервисы:** `benchmergebackend/docs/services.adoc`
+* **Хранилище:** `benchmergebackend/docs/storage.adoc`
+* **Примеры файлов:** `benchmergebackend/docs/storage_example.adoc`
+* **Запуск:** `benchmergebackend/docs/starting.adoc`
+
+== Архитектурная схема
+
+См. `benchmergebackend/docs/architecture.puml` для диаграммы PlantUML.
